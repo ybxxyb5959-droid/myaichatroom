@@ -8,8 +8,9 @@ import { discuss, IDS, errorLabel, errorKind, mentionedTargets } from '../lib/di
 import { createAssistantServer, loadConfig } from '../server.mjs';
 import { run } from '../lib/agents.mjs';
 import { renderMarkdown, extractLinks, safeUrl, splitFold } from '../public/format.mjs';
-import { AUTO_BRIEF, redact, splitMemo, memoBlock, MEMO_CHARS, BIO_CHARS, pickScript } from '../lib/auto.mjs';
-import { memberStatus, limitWindows, batteryLevel } from '../public/status.mjs';
+import { AUTO_BRIEF, redact, splitMemo, memoBlock, MEMO_CHARS, BIO_CHARS, pickScript, peerContext } from '../lib/auto.mjs';
+import { MEMBERS } from '../lib/members.mjs';
+import { memberStatus, latestCall, limitWindows, batteryLevel } from '../public/status.mjs';
 import { ACTIVITY_PROMPT, parseActivity, postcard } from '../lib/activities.mjs';
 import { gameDocument } from '../lib/game.mjs';
 
@@ -322,6 +323,7 @@ function autoAdapter() {
         log.auto++;
         if (log.waitForAbort) { await new Promise((resolve) => opts.signal.addEventListener('abort', resolve, { once: true })); return { ok: true, text: '늦은 답' }; }
         if (log.mode === 'quota') return { ok: false, detail: 'usage limit reached api_key=SECRET123' };
+        if (log.mode === 'timeout') return { ok: false, detail: 'timeout api_key=SECRET123' };
         return { ok: true, text: `${id}의 짧은 말${log.memo ? `\n[메모] ${id} 말투 메모` : ''}${log.bio ? `\n[소개] ${id}의 한 줄 소개` : ''}` };
       }
       log.user++;
@@ -419,6 +421,10 @@ test('그림은 대화 호출 안에서 생성되고 6시간 간격·하루 2개
     assert.equal(view.room.auto.usage.calls, 4); assert.equal(view.room.auto.usage.creations, 1);
     const picture = view.messages.find((m) => m.attach?.generated);
     assert.equal(picture.text, '가상 파티 왔음ㅋㅋ');
+    const entry = view.files.find((f) => f.path === picture.attach.path);
+    assert.equal(entry.title, '같이 놀자');
+    assert.equal(entry.activity, 'postcard');
+    assert.equal(entry.image, true);
     const image = await fetch(s.url + '/ws/' + picture.attach.path);
     assert.match(image.headers.get('content-type'), /image\/svg\+xml/);
     assert.match(await image.text(), /가상 장면/);
@@ -454,15 +460,20 @@ test('새 사진과 멘트는 한 메시지에 게시되며 이미지 호출도 
     await enableAuto(s, 'high'); clock.t += 20000; await s.app.tick();
     let view = await s.state(); const msg = view.messages.find((m) => m.attach?.generated);
     assert.equal(msg.text, '가상 파티 왔음ㅋㅋ'); assert.ok(msg.attach.path.endsWith('.png'));
+    const entry = view.files.find((f) => f.path === msg.attach.path);
+    assert.equal(entry.title, '파티');
+    assert.equal(entry.activity, 'photo');
+    assert.equal(entry.image, true);
     assert.equal(view.room.auto.usage.photos, 1); assert.equal(view.room.auto.usage.calls, 5);
     await s.app.close(); s = await startAuto(root, adapter, clock);
     clock.t += 7 * HOUR; await s.app.tick();
     view = await s.state();
     assert.equal(images, 1); assert.equal(view.room.auto.usage.photos, 1);
+    assert.equal(view.files.find((f) => f.path === msg.attach.path).title, '파티');
     assert.ok(view.messages.some((m) => m.attach?.path.endsWith('.svg')));
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('사진 생성 실패는 숨기거나 재시도하지 않고 자동 호출을 쉰다', async () => {
+test('사진 생성 한도는 숨기거나 재시도하지 않고 해당 AI만 쉰다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-photo-'));
   const clock = { t: baseTime() }; const adapter = autoAdapter(); let images = 0;
   adapter.available = () => ({ gpt: true, claude: false, gemini: false });
@@ -473,7 +484,9 @@ test('사진 생성 실패는 숨기거나 재시도하지 않고 자동 호출�
     await enableAuto(s); clock.t += 20000; await s.app.tick();
     const view = await s.state();
     assert.equal(view.room.auto.usage.calls, 2);
-    assert.equal(view.room.auto.usage.stopped, 'quota');
+    assert.equal(view.room.auto.usage.stopped, null);
+    assert.equal(view.room.enabled.gpt, false);
+    assert.equal(view.room.quotaRest.gpt.autoResume, true);
     assert.ok(view.messages.some((m) => m.errorKind === 'quota'));
     assert.ok(!JSON.stringify(view).includes('SECRET123'));
     clock.t += 7 * HOUR; await s.app.tick(); assert.equal(images, 1);
@@ -536,19 +549,19 @@ test('자동 호출은 하루 상한에서 멈추고, 재시작해도 같은 날
     assert.equal((await s.state()).room.autoDaily, 40);
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('오류가 나면 재시도·모델 변경 없이 쉬고, 사용자 질문과 비밀 숨김은 그대로 동작한다', async () => {
+test('한도 이외 오류는 재시도·모델 변경 없이 쉬고, 사용자 질문과 비밀 숨김은 그대로 동작한다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-auto-'));
   const adapter = autoAdapter(); const clock = { t: baseTime() };
   const s = await startAuto(root, adapter, clock);
   try {
     await enableAuto(s);
-    adapter.log.mode = 'quota';
+    adapter.log.mode = 'timeout';
     clock.t += 2 * HOUR; await s.app.tick();
     assert.equal(adapter.log.auto, 1);
     for (let i = 0; i < 3; i++) { clock.t += 2 * HOUR; await s.app.tick(); }
     assert.equal(adapter.log.auto, 1);
     const view = await s.state();
-    assert.equal(view.room.autoRest, true); assert.equal(view.room.auto.usage.stopped, 'quota');
+    assert.equal(view.room.autoRest, true); assert.equal(view.room.auto.usage.stopped, 'timeout');
     assert.ok(!JSON.stringify(view).includes('SECRET123'));
     assert.equal(view.room.auto.level, 'low');
     assert.equal((await s.post('/api/send', { text: '질문' })).status, 200);
@@ -632,8 +645,38 @@ test('대표 상태는 CLI 발견만으로 활성이 되지 않고, 비밀은 �
   assert.equal(memberStatus({ ...base, call: { status: 'fail', kind: 'quota', at: now - 31 * 60000 } }).text, '연결 확인 필요');
   assert.equal(memberStatus({ ...base, available: false }).text, '연결 설정 필요');
   assert.equal(memberStatus({ ...base, loginStatus: 'fail' }).text, '연결 설정 필요');
+  const check = { models: { selected: { status: 'fail', kind: 'capacity', at: now - 1 }, auto: { status: 'ok', at: now } } };
+  assert.equal(memberStatus({ ...base, call: latestCall(check) }).text, '활성');
+  check.models.auto = { status: 'fail', kind: 'quota', at: now + 1 };
+  assert.equal(memberStatus({ ...base, call: latestCall(check) }).text, '지금은 이용 불가');
   const out = redact('Authorization: Bearer abc.def token=xyz789 sk-abcdefghijkl password: hunter2');
   assert.ok(!/abc\.def|xyz789|abcdefghijkl|hunter2/.test(out));
+});
+test('일반·자동 답변 성공은 연결 기록에 반영되고 기존 답변도 재시작 시 복구한다', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-connectivity-'));
+  const clock = { t: baseTime() };
+  let s = await startAuto(root, autoAdapter(), clock);
+  try {
+    await s.post('/api/room', { selected: 'gpt', targeted: true });
+    await s.post('/api/send', { text: '안녕' });
+    await s.app.active?.done;
+    let view = await s.state();
+    assert.equal(view.room.checks.gpt.models[view.room.models.gpt.model].status, 'ok');
+    assert.equal(view.room.checks.gpt.login.status, 'ok');
+    await enableAuto(s);
+    clock.t += 20 * 60000; await s.app.tick();
+    view = await s.state();
+    assert.equal(view.room.checks.gpt.models['gpt-6-luna'].status, 'ok');
+    assert.equal(latestCall(view.room.checks.gpt).status, 'ok');
+    // Simulate an old saved room with real answers but no recorded checks.
+    s.app.store.state.assistant.checks.gpt = { login: null, models: {} };
+    s.app.store.saveState();
+    await s.app.close();
+    s = await startAuto(root, autoAdapter(), clock);
+    view = await s.state();
+    assert.equal(view.room.checks.gpt.models['gpt-6-luna'].status, 'ok');
+    assert.equal(view.room.checks.gpt.login.status, 'ok');
+  } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('켜 둔 채 앱을 다시 켜면 첫 대화가 곧 시작되고, 내부 예약 시각은 유지되며, 예전 Gemini 기본 이름은 고친다', async () => {
@@ -764,14 +807,17 @@ test('첫 시작 안내를 마치면 열렸다는 줄, 입장 문구, AI들의 �
     assert.equal(adapter.log.auto, 2); assert.equal(s.app.store.messages.filter((m) => m.kind === 'welcome').length, 1);
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
-test('첫 인사가 실패하면 재시도하지 않고 넘어가며, 연결된 AI가 없으면 열렸다는 줄과 입장 문구만 나온다', async () => {
+test('첫 인사의 한도 오류는 각 AI를 한 번만 쉬게 하고, 연결된 AI가 없으면 입장 안내만 나온다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-welcome-'));
   const adapter = autoAdapter(); adapter.log.mode = 'quota';
   let s = await startAuto(root, adapter, { t: Date.now() }, { greetings: true });
   try {
     await s.post('/api/room', { onboarding: { done: true } });
-    await waitFor(() => adapter.log.auto >= 1);
-    assert.equal(adapter.log.auto, 1); // no retry, the second AI is not called either
+    await waitFor(() => adapter.log.auto >= 2);
+    assert.equal(adapter.log.auto, 2); // each AI is called once, without retrying either one
+    assert.equal(adapter.log.prompts.filter((p) => p.auto && p.id === 'gpt').length, 1);
+    assert.equal(adapter.log.prompts.filter((p) => p.auto && p.id === 'claude').length, 1);
+    assert.equal(s.app.store.messages.filter((m) => m.text === '나 잠깐 쉬러간다 ㅋㅋ').length, 2);
     assert.ok(!s.app.store.messages.some((m) => m.auto === 'greet'));
     assert.equal((await s.state()).room.auto.usage.stopped, null); // a failed hello does not rest the day
     await s.app.close();
@@ -828,8 +874,21 @@ test('자동 대화는 카드·시간대·순서(열기·받아치기·마무리
     const card = (p) => p.prompt.split('\n\n[내 개인 메모')[0].split('\n\n').at(-1); // the instruction before the memo block
     assert.notEqual(card(turns[0]), card(turns[1])); // open vs answer back
     assert.notEqual(card(turns[1]), card(turns[2])); // answer back vs wrap up
+    for (const turn of turns) {
+      const peer = turn.id === 'gpt' ? 'claude' : 'gpt';
+      assert.ok(turn.brief.includes(`너는 ${MEMBERS[turn.id].name}다.`));
+      assert.ok(turn.brief.includes(`이번 대화의 AI 동료: ${MEMBERS[peer].name}.`));
+      assert.match(turn.brief, /@이름으로 멘션/);
+      assert.match(turn.brief, /사용자의 새 메시지에 답하는 턴이 아니다/);
+      assert.match(turn.brief, /사용자에게 질문·선택·작업을 떠넘기지 않는다/);
+    }
     for (const t of turns) for (const rule of ['반말', '존댓말 금지', '상담원 말투', '지어내지 않는다', '맞장구만 치지 않는다']) assert.ok(t.brief.includes(rule), rule);
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+test('혼자 자동 대화하는 AI에게 없는 동료나 사용자를 부르도록 지시하지 않는다', () => {
+  const context = peerContext('Claude', []);
+  assert.match(context, /AI 동료: \(없음\)/);
+  assert.match(context, /없는 상대를 부르지 않는다/);
 });
 test('방 이름과 내 이름을 바꿀 수 있고, AI는 바뀐 이름으로 부르며, 재시작해도 유지된다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-names-'));
@@ -846,6 +905,7 @@ test('방 이름과 내 이름을 바꿀 수 있고, AI는 바뀐 이름으로 �
 
     await s.post('/api/send', { text: '안녕' }); await s.app.active?.done;
     assert.ok(adapter.log.prompts.filter((p) => !p.auto).every((p) => p.brief.includes('사용자의 이름은 "민수"이다')));
+    assert.ok(adapter.log.prompts.filter((p) => !p.auto).every((p) => !p.brief.includes('[AI끼리 대화하는 현재 턴]')));
     await s.post('/api/send', { text: '또' }); await s.app.active?.done;
     assert.ok(adapter.log.prompts.at(-1).prompt.includes('민수: 안녕')); // the history says the name, not "user"
 
@@ -853,6 +913,7 @@ test('방 이름과 내 이름을 바꿀 수 있고, AI는 바뀐 이름으로 �
     clock.t += 2 * HOUR; await s.app.tick();
     const auto = adapter.log.prompts.filter((p) => p.auto);
     assert.ok(auto.length > 0 && auto.every((p) => p.brief.includes('사용자의 이름은 "민수"이다')));
+    assert.ok(auto.every((p) => p.brief.includes('과거 사용자 발언이나 메모는 참고일 뿐, 현재 참여로 간주하지 않는다')));
     assert.ok(auto.some((p) => p.prompt.includes('민수: 또')));
 
     await s.app.close();

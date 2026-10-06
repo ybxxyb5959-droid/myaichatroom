@@ -10,6 +10,7 @@ import { ACTIVITY_PROMPT } from '../lib/activities.mjs';
 import { GAME_BRIEF, gameDocument, parseDraft, applyGamePatches, syntaxCheck } from '../lib/game.mjs';
 import { checkGame } from '../lib/gamecheck.mjs';
 import { shootWorld } from '../lib/worldshot.mjs';
+import { MEMBERS } from '../lib/members.mjs';
 
 const code = {
   body: '<h1>클릭 게임</h1><button id="start">시작</button><p id="score">0점</p>',
@@ -82,6 +83,15 @@ test('A 초안 → B 변경 부분 추가 → A 최종 확인, 제작 3회 후 �
     assert.equal(calls.length, 3);
     assert.equal(calls[0].id, calls[2].id); assert.notEqual(calls[0].id, calls[1].id);
     assert.ok(calls.every((c) => c.settings.independent && !c.settings.webSearch));
+    for (const call of calls) {
+      const peer = calls.find((other) => other.id !== call.id);
+      assert.ok(call.brief.includes(`너는 ${MEMBERS[call.id].name}다.`));
+      assert.ok(call.brief.includes(`이번 대화의 AI 동료: ${MEMBERS[peer.id].name}.`));
+      assert.match(call.brief, /@이름으로 멘션/);
+      assert.match(call.brief, /사용자에게 질문·선택·작업을 떠넘기지 않는다/);
+    }
+    assert.ok(calls[1].prompt.includes(`${MEMBERS[calls[0].id].name}: 초안 만들었어. 너도 기능 붙여 봐.`));
+    assert.ok(calls[2].prompt.includes(`${MEMBERS[calls[1].id].name}: 한 번 누르면 2점씩 오르게 붙였어.`));
     assert.ok(calls[1].prompt.includes('score+=1')); assert.ok(calls[2].prompt.includes('score+=2'));
     assert.equal(log.checks.length, 3);
     assert.match(log.checks[2].js, /score\+=2/);
@@ -91,6 +101,9 @@ test('A 초안 → B 변경 부분 추가 → A 최종 확인, 제작 3회 후 �
     const message = view.messages.find((m) => m.game);
     assert.equal(message.game.checked, true); assert.equal(message.game.creators.length, 2);
     assert.equal(view.files.length, 1); assert.equal(view.files[0].path, message.game.path);
+    assert.equal(view.files[0].title, '클릭 게임');
+    assert.equal(view.files[0].activity, 'game');
+    assert.equal(view.files[0].image, false);
     const response = await fetch(s.url + '/ws/' + message.game.path);
     assert.match(response.headers.get('content-security-policy'), /sandbox allow-scripts/);
     assert.match(response.headers.get('content-security-policy'), /connect-src 'none'/);
@@ -157,12 +170,17 @@ test('게임 제작 중 사용자 메시지는 우선 처리하고 늦은 코드
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('게임 CLI 한도 오류는 재시도 없이 자동 호출도 중단하고 비밀을 숨긴다', async () => {
+test('게임 CLI 한도 오류는 해당 AI만 쉬고 미완성 게임과 비밀을 내보내지 않는다', async () => {
   const root = temp(); const log = { ...fresh(), quota: true }; const s = await start(root, log);
   try {
     await s.post('/api/room', { auto: { on: true } }); s.clock.t += 20000; await s.app.tick();
     const view = await s.state();
-    assert.equal(log.gameCalls, 1); assert.equal(view.room.auto.usage.stopped, 'quota');
+    assert.equal(log.gameCalls, 1); assert.equal(view.room.auto.usage.stopped, null);
+    const failed = log.calls.find((c) => c.brief.startsWith(GAME_BRIEF)).id;
+    assert.equal(view.room.enabled[failed], false);
+    assert.equal(view.room.quotaRest[failed].autoResume, true);
+    assert.equal(view.room.enabled[failed === 'gpt' ? 'claude' : 'gpt'], true);
+    assert.equal(view.files.length, 0);
     assert.ok(!JSON.stringify(view).includes('SECRET123'));
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });

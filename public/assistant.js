@@ -1,6 +1,6 @@
 // Personal assistant UI; the existing portraits and group-chat layout are reused.
 import { esc, renderMarkdown, extractLinks, splitFold } from './format.mjs';
-import { memberStatus, limitWindows, batteryLevel } from './status.mjs';
+import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
 
 const $ = (s) => document.querySelector(s);
 const IDS = ['gemini', 'gpt', 'claude'];
@@ -77,11 +77,12 @@ const kindText = (kind) => state.kinds[kind] || state.kinds.unknown;
 
 // One plain status per AI (rules in status.mjs); the separate technical steps live under "자세히".
 const STATUS_CLS = { setup: 'missing', rest: 'off', busy: 'busy', check: 'unknown', unavailable: 'fail', active: 'ok' };
-function statusOf(id, model) {
+function statusOf(id, model, connection = false) {
+  if (state.room.quotaRest?.[id]) return { cls: 'off', text: '한도 휴식' };
   const check = state.room.checks[id];
   const s = memberStatus({ available: state.catalog[id].available, enabled: state.room.enabled[id],
     busy: state.room.active?.states[id]?.status === '생성 중', checking: state.room.checking.includes(id),
-    loginStatus: check.login?.status, call: check.models[model], now: Date.now() });
+    loginStatus: check.login?.status, call: connection ? latestCall(check) : check.models[model], now: Date.now() });
   return { cls: STATUS_CLS[s.key], text: s.text };
 }
 const dot = (st) => `<span class="st ${st.cls}"><i></i>${esc(st.text)}</span>`;
@@ -274,7 +275,7 @@ function renderProfile() {
   const id = profileId;
   const m = member(id);
   const model = bag()[id];
-  const st = statusOf(id, model.model);
+  const st = statusOf(id, model.model, true);
   const u = state.usage?.[id];
   const ws = limitWindows(id, u);
   const bio = state.room.bios[id];
@@ -321,11 +322,25 @@ function renderControls() {
     const live = room.active?.states[m.id];
     li.innerHTML = `<div class="av-wrap" data-profile="${m.id}" role="button" tabindex="0" aria-label="${esc(m.name)} 프로필 보기"><img class="av" src="/avatars/${m.id}-pixel-128.png" alt=""><span class="st-dot"></span></div>
       <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div>
-      <div class="m-status">${live && live.status !== '대기' ? esc({ '생성 중': '답변 중' }[live.status] || live.status) : dot(statusOf(m.id, settings.model))}</div>
+      <div class="m-status">${live && live.status !== '대기' ? esc({ '생성 중': '답변 중' }[live.status] || live.status) : dot(statusOf(m.id, settings.model, true))}</div>
       <div class="member-model">${room.discussion ? '토론 · ' : ''}${esc(settingText(settings))}</div>${limitHTML(m.id)}</div>
       <label class="switch" title="대화 참여"><input type="checkbox" aria-label="${esc(m.name)} 대화 참여" ${room.enabled[m.id] ? 'checked' : ''}><span></span></label>`;
-    // Clicking an AI picks it for "특정 AI에게만" and turns that on.
-    li.addEventListener('click', (e) => { if (!e.target.closest('.switch')) update({ selected: m.id, targeted: true }); });
+    if (room.quotaRest?.[m.id]) {
+      const resume = document.createElement('button');
+      resume.type = 'button';
+      resume.className = 'model-pill';
+      resume.textContent = room.quotaRest[m.id].autoResume ? '자동 복귀 끄기' : '자동 복귀 켜기';
+      resume.setAttribute('aria-label', `${m.name} ${resume.textContent}`);
+      resume.addEventListener('click', (e) => {
+        e.stopPropagation();
+        update({ enabled: { [m.id]: !room.quotaRest[m.id].autoResume } });
+      });
+      li.querySelector('.m-info').append(resume);
+    }
+    // The member row only toggles participation; targeted chat belongs to the bottom switch.
+    li.addEventListener('click', (e) => {
+      if (!e.target.closest('.switch, [data-profile], button')) update({ enabled: { [m.id]: !room.enabled[m.id] } });
+    });
     li.querySelector('input').addEventListener('change', (e) => update({ enabled: { [m.id]: e.target.checked } }));
     return li;
   }));
@@ -341,6 +356,8 @@ function renderControls() {
   $('#webHint').hidden = !room.webSearch; // the note about search support only matters once it is on
   $('#headSub').textContent = room.discussion ? `토론 모드 · 종합 ${nameOf(room.synthesizer)}`
     : room.targeted ? `${nameOf(room.selected)} · ${room.models[room.selected].model} · 이 AI에게만` : '켜져 있는 AI 모두에게 보내요 · @로 한 명만 부를 수 있어요';
+  $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요'
+    : room.targeted ? `${nameOf(room.selected)}에게 메시지를 입력하세요` : '채팅을 입력하세요';
   renderRoomSub();
   $('#headTitle').textContent = room.name || 'AI 단톡방';
   $('#roomName').textContent = room.name || 'AI 단톡방';
@@ -451,11 +468,37 @@ function renderDetails() {
 function renderFiles() {
   if ($('#wsFiles').dataset.openPath) return;
   $('#wsFiles').replaceChildren();
-  if (!state.files.length) { $('#wsFiles').textContent = '첨부한 사진과 기존 작업공간 파일이 여기에 표시됩니다.'; return; }
+  if (!state.files.length) { $('#wsFiles').textContent = '함께 만든 게임과 사진·그림이 여기에 표시됩니다.'; return; }
   for (const f of state.files) {
+    const game = f.activity === 'game';
+    const drawing = f.activity === 'postcard' || /\.svg$/i.test(f.path);
+    const kind = game ? '게임' : drawing ? '그림' : f.image ? '사진' : '파일';
+    const title = f.title || (kind === '파일' ? f.path.split('/').at(-1) : kind);
     const b = document.createElement('button');
+    b.type = 'button';
     b.className = 'file-entry';
-    b.textContent = f.path;
+    b.title = f.path;
+    const preview = document.createElement('span');
+    preview.className = 'file-preview';
+    if (f.image && !game) {
+      const img = document.createElement('img');
+      img.src = `/ws/${f.path.split('/').map(encodeURIComponent).join('/')}`;
+      img.alt = '';
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      preview.append(img);
+    } else preview.textContent = game ? '🎮' : '📄';
+    preview.setAttribute('aria-hidden', 'true');
+    const info = document.createElement('span');
+    info.className = 'file-info';
+    const heading = document.createElement('strong');
+    heading.className = 'file-title';
+    heading.textContent = title;
+    const action = document.createElement('span');
+    action.className = 'file-action';
+    action.textContent = `${kind} 열기`;
+    info.append(heading, action);
+    b.append(preview, info);
     b.addEventListener('click', () => openFile(f.path));
     $('#wsFiles').append(b);
   }
@@ -471,16 +514,17 @@ async function openFile(path) {
     const back = document.createElement('button');
     back.className = 'model-pill'; back.textContent = '← 파일 목록';
     back.onclick = () => { delete $('#wsFiles').dataset.openPath; renderFiles(); };
-    const picture = data.image || data.activity === 'postcard';
+    const picture = data.image || data.activity === 'postcard' || /\.svg$/i.test(path);
+    const title = state.files.find((f) => f.path === path)?.title;
     const content = document.createElement(data.activity === 'game' ? 'iframe' : picture ? 'img' : 'pre');
     if (data.activity === 'game') {
       content.setAttribute('sandbox', 'allow-scripts');
-      content.title = '미니게임';
+      content.title = title || '게임';
       content.style.cssText = 'width:100%;height:390px;border:0';
       content.src = `/ws/${path.split('/').map(encodeURIComponent).join('/')}`;
     } else if (picture) {
       content.src = `/ws/${path.split('/').map(encodeURIComponent).join('/')}`;
-      content.style.maxWidth = '100%'; content.alt = path;
+      content.style.maxWidth = '100%'; content.alt = title || (data.image ? '사진' : '그림');
     } else content.textContent = data.text;
     $('#wsFiles').replaceChildren(back, content);
   } catch (e) { toast(e.message); }

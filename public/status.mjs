@@ -11,6 +11,11 @@ export const batteryLevel = (pct) => (pct < 20 ? 'low' : pct < 50 ? 'mid' : 'ok'
 // One plain status per AI. Finding the program is not enough: "활성" needs a real call
 // that worked with the model in use and no failure after it.
 export const FAIL_WINDOW_MS = 30 * 60 * 1000;
+// Member connectivity follows the latest real call, including the light auto model.
+// Model-specific pickers still use the selected model's own result.
+export function latestCall(check) {
+  return Object.values(check.models).reduce((latest, call) => !latest || call.at > latest.at ? call : latest, null);
+}
 // available: program found · loginStatus: 'ok'|'fail'|'unknown'|null · call: last real call with this
 // model {status, kind, at} · enabled: user's participation switch · busy: answering now
 export function memberStatus({ available, enabled, busy, checking, loginStatus, call, now = Date.now() }) {

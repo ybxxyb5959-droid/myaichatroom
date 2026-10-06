@@ -344,7 +344,13 @@ button:disabled { opacity: .5; cursor: default; }
 .side-btn { text-align: left; border: 1px solid var(--line-2); background: var(--panel); border-radius: 10px; padding: 7px 10px; font-size: 12.5px; color: var(--text); }
 .side-btn:hover { border-color: var(--accent); }
 .status-row { color: var(--muted); font-size: 12px; }
-.file-entry { display: block; width: 100%; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 5px 0; }
+.file-entry { display: flex; align-items: center; gap: 12px; flex: none; width: 100%; text-align: left; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 5px 0; }
+.file-entry:hover, .file-entry:focus-visible { border-color: var(--accent); }
+.file-preview { display: grid; place-items: center; flex: none; width: 72px; height: 64px; border-radius: 9px; overflow: hidden; background: var(--panel); font-size: 30px; }
+.file-preview img { width: 100%; height: 100%; object-fit: cover; }
+.file-info { display: grid; gap: 6px; min-width: 0; }
+.file-title { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.file-action { color: var(--muted); font-size: 12px; }
 .ws-body pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 13px; }
 .send:disabled { opacity: .45; cursor: default; }
 
