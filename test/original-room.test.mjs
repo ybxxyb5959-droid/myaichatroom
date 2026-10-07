@@ -73,21 +73,22 @@ test('normal read, cooldown, per-minute caps and opening silence delays use upst
 
 test('a quiet room wakes only one member and a pass increases the next silence delay', async (t) => {
   const s = await roomFixture(t);
+  const ordinaryCalls = () => s.calls.filter((call) => !call.options.independent);
   // The first reading of the one-time system welcome is completed without speech.
   await s.start(); await s.advance(); await s.advance(8000);
   assert.equal(s.calls.length, 3);
   s.app.runtime.spark.quick = false;
   s.app.runtime.spark.base = null;
-  const before = s.calls.length;
+  const before = ordinaryCalls().length;
   await s.advance(240000);
-  assert.equal(s.calls.length, before + 1);
-  const starter = s.calls.at(-1).id;
+  assert.equal(ordinaryCalls().length, before + 1);
+  const starter = ordinaryCalls().at(-1).id;
   const at = s.clock.now;
   await s.advance(383999);
-  assert.equal(s.calls.length, before + 1);
+  assert.equal(ordinaryCalls().length, before + 1);
   await s.advance(1);
-  assert.equal(s.calls.length, before + 2);
-  assert.notEqual(s.calls.at(-1).id, starter);
+  assert.equal(ordinaryCalls().length, before + 2);
+  assert.notEqual(ordinaryCalls().at(-1).id, starter);
   assert.equal(s.clock.now - at, 384000);
 });
 

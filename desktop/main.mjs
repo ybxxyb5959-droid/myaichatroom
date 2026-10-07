@@ -135,7 +135,7 @@ async function launch() {
       return result;
     })()`);
     if (!sharingScreen.open || !sharingScreen.fits || sharingScreen.usage !== '오늘 0/15회 사용'
-      || sharingScreen.ownerQR !== '내 휴대폰 QR' || sharingScreen.friendQR !== '친구 초대 QR'
+      || sharingScreen.ownerQR !== '내 폰 연결 QR 만들기' || sharingScreen.friendQR !== '친구 초대 QR 만들기'
       || sharingScreen.defaultLimit !== '15' || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
       throw new Error('공유 메뉴·PWA 확인 실패: ' + JSON.stringify(sharingScreen));
     console.log('SHARING_SCREEN_SMOKE ' + JSON.stringify(sharingScreen));

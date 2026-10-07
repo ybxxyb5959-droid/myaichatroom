@@ -24,6 +24,7 @@ import { redact, cleanTitle, cleanBio } from './lib/auto.mjs';
 import { latestCall } from './public/status.mjs';
 import { World } from './lib/world.mjs';
 import { WorldPlayer } from './lib/world-player.mjs';
+import { HouseRuntime } from './lib/house-runtime.mjs';
 import { shootWorld } from './lib/worldshot.mjs';
 import { OriginalRoom, SPEEDS, WS_CSP } from './lib/original-room.mjs';
 import { prepareOriginalData } from './lib/original-migration.mjs';
@@ -147,7 +148,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   native.autoSleepMin = room.auto.sleepMinutes; native.enabled = room.enabled; native.boostMode = room.boostMode;
   const world = new World(root, IDS);
   const activity = new ActivityLog(path.join(root, 'data', 'activity.json'), { clock });
-  let runtime, player, active = null, closed = false;
+  let runtime, player, houseRuntime, active = null, closed = false;
   const nameOf = (id) => MEMBERS[id]?.name || (id === 'user' ? room.userName : id);
   const persist = () => {
     room.auto.on = native.running; room.auto.usage.calls = native.calls;
@@ -180,6 +181,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (IDS.includes(message.from) && message.text) activity.add({ kind: active ? 'chat' : 'talk', actors: [message.from],
       text: `${nameOf(message.from)}: ${topicOf(message.text)}`, ref: { messageId: savedMessage.id } });
     if (message.kind === 'world') activity.add({ kind: 'house', actors: message.by ? [message.by] : [], text: message.text });
+    houseRuntime?.observe(savedMessage);
     persist(); broadcast('message', savedMessage);
     return savedMessage;
   };
@@ -250,11 +252,16 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     shot: (options, signal) => worldShooter(root, server.address().port, { ...options, signal }) });
   native.lastUserAt = clock();
   player = new WorldPlayer({ world, clock, broadcast, post, nameOf, activity: () => { native.lastUserAt = clock(); } });
+  houseRuntime = new HouseRuntime({ root, ids: IDS, store, runtime, config, post, broadcast, activity, nameOf, clock, random });
   if (native.running) runtime.start();
   persist();
   if (!store.messages.length) post({ from: 'system', kind: 'welcome', text: `${room.roomName} 열렸어! 멤버: ${IDS.map(nameOf).join(' · ')} · ${room.userName}` });
-  for (const text of [...store.warnings, ...activity.warnings, ...world.warnings]) post({ from: 'system', kind: 'error', text });
-  const tick = () => { player.tick(); return runtime.tick(); };
+  for (const text of [...store.warnings, ...activity.warnings, ...world.warnings, ...houseRuntime.house.warnings]) post({ from: 'system', kind: 'error', text });
+  const tick = () => {
+    player.tick();
+    const ordinary = runtime.tick();
+    return Promise.all([ordinary, houseRuntime.tick()]).then(([result]) => result);
+  };
   const normalTimer = setInterval(() => {
     try { tick().catch((e) => store.log('room', redact(e.message))); }
     catch (e) { store.log('room', redact(e.message)); }
@@ -552,6 +559,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         return;
       }
       if (req.method === 'GET' && p === '/api/state') return json(res, 200, view());
+      if (req.method === 'GET' && p === '/api/house') return json(res, 200, houseRuntime.view());
       if (req.method === 'GET' && p === '/api/world') return json(res, 200, { ...world.view(),
         avatars: { ...world.avatarView(), ...(player.avatar() ? { user: player.avatar() } : {}) }, player: player.view() });
       if (req.method === 'GET' && p === '/api/preview') {
@@ -571,6 +579,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (req.method === 'GET' && p === '/api/history') return json(res, 200, { messages: store.messages.filter((m) => m.id < (Number(url.searchParams.get('before')) || Infinity)).slice(-200) });
       if (req.method === 'POST') {
         const body = await bodyOf(req);
+        if (p.startsWith('/api/house/')) return json(res, 200, houseRuntime.action(p.slice('/api/house/'.length), body));
         if (p.startsWith('/api/world/')) {
           const action = p.slice('/api/world/'.length);
           let result;
@@ -699,7 +708,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const rel = p === '/' ? 'index.html' : p.slice(1);
       if (rel === 'vendor/three.module.js') return await serve(res, path.join(ROOT, 'node_modules/three/build/three.module.js'));
       if (/^vendor\/addons\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.js$/.test(rel)) return await serve(res, path.join(ROOT, 'node_modules/three/examples/jsm', rel.slice('vendor/addons/'.length)));
-      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'discussion-stage.mjs', 'assistant.css', 'style.css', 'world.html', 'world-player.js', 'world-player.css', 'i18n.js', 'recipients.mjs', 'share.js'].includes(rel)
+      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'discussion-stage.mjs', 'dot-characters.mjs', 'assistant.css', 'style.css', 'world.html', 'world-player.js', 'world-player.css', 'house.js', 'house.css', 'house-shape.mjs', 'house-view.mjs', 'house-scene.mjs', 'house-avatar.mjs', 'house-pose.mjs', 'house-controls.mjs', 'i18n.js', 'recipients.mjs', 'share.js'].includes(rel)
         && !/^avatars\/(?:(claude|gpt|gemini)-pixel(-128)?\.png)$/.test(rel)
         && !/^sprites\/discussion-(claude|gpt|gemini)\.svg$/.test(rel)) return json(res, 404, { error: '파일이 없습니다.' });
       return await serve(res, path.join(ROOT, 'public', rel));
@@ -726,7 +735,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     server.closeAllConnections();
     if (server.listening) await new Promise((resolve) => server.close(resolve));
   }
-  return { server, startExternal, phoneConnection, startSharing, close, store, world, activity, room, runtime, view, tick, get active() { return active; } };
+  return { server, startExternal, phoneConnection, startSharing, close, store, world, house: houseRuntime.house, houseRuntime, activity, room, runtime, view, tick, get active() { return active; } };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

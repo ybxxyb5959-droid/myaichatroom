@@ -1,5 +1,5 @@
 // Personal assistant UI; the existing portraits and group-chat layout are reused.
-import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML } from './format.mjs';
+import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML, houseEventHTML } from './format.mjs';
 import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
 import { createDiscussionStage } from './discussion-stage.mjs';
 import { dotCharacters, dotCharacter } from './dot-characters.mjs';
@@ -142,7 +142,7 @@ function messageNode(m) {
   if (m.from === 'system') {
     if (m.kind === 'house-event') {
       node.className = 'sys k-house-event';
-      node.textContent = m.text;
+      node.innerHTML = houseEventHTML(m.text, m.houseEvent?.id);
       return node;
     }
     if (m.kind === 'house-build') {
@@ -316,30 +316,21 @@ function renderProgress() {
   const stick = distance() < 100;
   renderDiscussionStage(state.room);
   if (stick) tl.scrollTop = tl.scrollHeight;
-  const typing = state.members.filter((m) => m.typing);
-  const a = state.room.active || (typing.length ? {
-    mode: 'chat',
-    states: Object.fromEntries(typing.map((m) => [m.id, { status: '생성 중' }])),
-  } : null);
+  const a = state.room.active?.mode === 'discussion' ? state.room.active : null;
   const box = $('#typing');
   box.classList.toggle('on', !!a);
   if (!a) { box.replaceChildren(); return; }
   const entries = Object.entries(a.states);
-  const chips = entries.map(([id, s]) => `<span class="pg-ai ${stateClass(s)} ${a.mode === 'discussion' && s.phase === 'review' ? 'debating' : ''}" style="--c:${member(id).color}">${avatar(id)}<b>${esc(nameOf(id))}</b> ${s.status === '생성 중' ? wave(a.mode === 'discussion' && s.phase === 'review' ? '토론하는 중...' : '입력중...') : esc(s.status)}${s.kind ? ` · ${esc(kindText(s.kind))}` : ''}${s.reason ? ` · ${esc(s.reason)}` : ''}${a.synthesizer === id ? ' <em>종합</em>' : ''}</span>`).join('');
-  if (a.mode === 'discussion') {
-    const joined = entries.filter(([, s]) => s.status !== '제외').length;
-    const reached = Math.max(0, ...entries.filter(([, s]) => !['대기', '제외'].includes(s.status)).map(([, s]) => STEPS.indexOf(s.phase)));
-    const steps = STEPS.map((p, i) => `<li class="${i < reached ? 'done' : i === reached ? 'now' : ''}">${PHASES[p]}</li>`).join('');
-    box.innerHTML = `<ol class="pg-steps">${steps}</ol><div class="pg-ais">${chips}</div>`;
-  } else {
-    box.innerHTML = `<div class="pg-ais">${chips}</div>`;
-  }
+  const chips = entries.map(([id, s]) => `<span class="pg-ai ${stateClass(s)} ${s.phase === 'review' ? 'debating' : ''}" style="--c:${member(id).color}">${avatar(id)}<b>${esc(nameOf(id))}</b> ${s.status === '생성 중' ? wave('토론하는 중...') : esc(s.status)}${s.kind ? ` · ${esc(kindText(s.kind))}` : ''}${s.reason ? ` · ${esc(s.reason)}` : ''}${a.synthesizer === id ? ' <em>종합</em>' : ''}</span>`).join('');
+  const reached = Math.max(0, ...entries.filter(([, s]) => !['대기', '제외'].includes(s.status)).map(([, s]) => STEPS.indexOf(s.phase)));
+  const steps = STEPS.map((p, i) => `<li class="${i < reached ? 'done' : i === reached ? 'now' : ''}">${PHASES[p]}</li>`).join('');
+  box.innerHTML = `<ol class="pg-steps">${steps}</ol><div class="pg-ais">${chips}</div>`;
 }
 // A provider error can pause automatic calls; an app-defined daily call cap is no longer used.
 const restText = () => '오류로 자동 대화를 쉬고 있어요 · 연결 상태를 확인해 주세요';
 function renderRoomSub() {
   const room = state.room;
-  $('#roomSub').textContent = room.active || pending ? (room.discussion ? '토론하는 중...' : '입력중...')
+  $('#roomSub').textContent = room.active?.mode === 'discussion' || (pending && room.discussion) ? '토론하는 중...'
     : room.auto.on ? (room.autoSleeping ? '잠들어 있어요 · 말 걸면 깨어나요' : room.autoRest ? restText(room) : room.autoRunning ? '켜져 있음 · 대화 중' : '켜져 있음') : '꺼져 있음';
 }
 // Models in use: the discussion group has its own, everything else uses the normal chat models.
@@ -422,12 +413,12 @@ function renderControls() {
     li.className = `member ${!ready ? 'st-missing' : !room.enabled[m.id] ? 'st-off' : ''}`;
     li.style.setProperty('--c', m.color);
     const settings = bag()[m.id];
-    const live = room.active?.states[m.id];
+    const live = room.active?.mode === 'discussion' ? room.active.states[m.id] : null;
     // What the member is doing comes from the server's own facts; otherwise the connection status.
-    const doing = ['work', 'talk', 'world'].includes(m.activity?.kind) ? `<span class="m-doing">${esc(m.activity.text)}</span>` : '';
+    const doing = ['work', 'world'].includes(m.activity?.kind) ? `<span class="m-doing">${esc(m.activity.text)}</span>` : '';
     li.innerHTML = `<div class="av-wrap" data-profile="${m.id}" role="button" tabindex="0" aria-label="${esc(m.name)} 프로필 보기"><img class="av" src="/avatars/${m.id}-pixel-128.png" alt=""><span class="st-dot"></span></div>
       <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div>
-      <div class="m-status">${live && live.status !== '대기' ? (live.status === '생성 중' ? wave(room.discussion && live.phase === 'review' ? '토론하는 중...' : '입력중...') : esc(live.status)) : doing || dot(statusOf(m.id, settings.model, true))}</div>
+      <div class="m-status">${live && live.status !== '대기' ? (live.status === '생성 중' ? wave('토론하는 중...') : esc(live.status)) : doing || dot(statusOf(m.id, settings.model, true))}</div>
       <div class="member-model">${room.discussion ? '토론 · ' : ''}${esc(settingText(settings))}</div>${limitHTML(m.id)}</div>
       <label class="switch" title="대화 참여"><input type="checkbox" aria-label="${esc(m.name)} 대화 참여" ${room.enabled[m.id] && ready ? 'checked' : ''}><span></span></label>`;
     // The member row only toggles participation; targeted chat belongs to the bottom switch.
@@ -1289,6 +1280,7 @@ $('#loadMore').onclick = async () => {
 };
 function connect() {
   const events = new EventSource('/events');
+  events.addEventListener('house', () => window.dispatchEvent(new Event('house-update')));
   events.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
   events.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
@@ -1298,6 +1290,10 @@ function connect() {
   });
   events.onerror = () => { $('#roomSub').textContent = '서버 연결 대기 중'; };
 }
+document.addEventListener('click', (e) => {
+  const button = e.target.closest('[data-house-event]');
+  if (button) window.dispatchEvent(new CustomEvent('house-open-event', { detail: { id: Number(button.dataset.houseEvent) } }));
+});
 try {
   applyState(await api('/api/state'));
   tl.scrollTop = tl.scrollHeight;

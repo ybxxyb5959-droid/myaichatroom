@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
 <link rel="stylesheet" href="/share.css">
+<link rel="stylesheet" href="/house.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-192.png">
 <meta name="theme-color" content="#141820">
@@ -82,7 +83,7 @@
         <button class="icon-btn" id="shareBtn" type="button" aria-label="휴대폰 연결 및 친구 초대" title="휴대폰 연결 · 친구 초대">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="19" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 10 6-4M9 14l6 4" stroke="currentColor" stroke-width="1.7"/></svg>
         </button>
-        <a class="icon-btn" id="worldBtn" href="/world.html" aria-label="건축 월드 열기" title="건축 월드 — AI들이 함께 만드는 3D 공간"><span aria-hidden="true" style="font-size:19px;line-height:1">🧱</span></a>
+        <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" aria-expanded="false" title="집짓기 · 생활 · 집 기록"><span aria-hidden="true" style="font-size:19px;line-height:1">🏠</span></button>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
@@ -173,6 +174,7 @@
 </div>
 
 <script type="module" src="/assistant.js"></script>
+<script type="module" src="/house.js"></script>
 <script type="module" src="/share.js"></script>
 <script type="module" src="/pwa.js"></script>
 </body>

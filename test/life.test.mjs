@@ -168,7 +168,7 @@ function homeRoot(t) {
   return root;
 }
 
-test('a completed legacy house stays untouched while the server uses the world', async (t) => {
+test('a completed saved house resumes life while its original data is backed up', async (t) => {
   const root = homeRoot(t);
   const file = path.join(root, 'data', 'house.json');
   const saved = fs.readFileSync(file, 'utf8');
@@ -180,15 +180,17 @@ test('a completed legacy house stays untouched while the server uses the world',
   clock.t += 16 * 60000;
   await s.app.tick();
   assert.equal(s.app.world.blocks.size, 0);
-  assert.ok(!s.app.store.messages.some((m) => m.kind === 'house-event'));
-  assert.equal(fs.readFileSync(file, 'utf8'), saved);
+  assert.ok(s.app.store.messages.some((m) => m.kind === 'house-event'));
+  assert.equal(fs.readFileSync(path.join(s.app.store.state.houseRestoration.backup, 'house.json'), 'utf8'), saved);
+  const floors = structuredClone(s.app.house.s.floors), events = structuredClone(s.app.house.s.events);
   await s.app.close();
   s = await start(t, root, { clock });
-  assert.equal(fs.readFileSync(file, 'utf8'), saved);
+  assert.deepEqual(s.app.house.s.floors, floors);
+  assert.deepEqual(s.app.house.s.events, events);
   assert.ok(!s.app.store.messages.some((m) => /집이 기본적으로 완성됐어요/.test(m.text)));
 });
 
-test('usage display no longer changes ordinary participation or revives house life', async (t) => {
+test('usage display does not change ordinary participation while house life runs', async (t) => {
   const root = homeRoot(t);
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const usage = { polling: false, lastPoll: Date.now(), onUpdate: () => {}, pollAll: async () => {},
@@ -203,19 +205,19 @@ test('usage display no longer changes ordinary participation or revives house li
   assert.ok(talk.length > 0);
   assert.equal(s.app.room.enabled.claude, true);
   assert.equal(s.app.room.quotaRest, undefined);
-  assert.ok(!s.app.store.messages.some((m) => m.kind === 'house-event'));
+  assert.ok(s.app.store.messages.some((m) => m.kind === 'house-event'));
 });
 
-test('old house decisions cannot mutate a preserved house through the API', async (t) => {
+test('house mode is restored, and invalid decisions cannot change the house layout', async (t) => {
   const root = homeRoot(t);
   const file = path.join(root, 'data', 'house.json');
   const saved = fs.readFileSync(file, 'utf8');
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, root, { clock });
   await s.post('/api/room', { auto: { on: true } });
-  for (const route of ['/api/house/decide', '/api/house/mode', '/api/house/undo']) {
-    assert.equal((await s.post(route, { choice: 'owner', mode: 'together' })).error, '지원하지 않는 기능입니다.');
-  }
-  assert.equal(fs.readFileSync(file, 'utf8'), saved);
+  assert.ok((await s.post('/api/house/decide', { choice: 'owner' })).error);
+  assert.ok((await s.post('/api/house/undo', {})).error);
+  assert.equal((await s.post('/api/house/mode', { mode: 'together' })).mode, 'together');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).floors, JSON.parse(saved).floors);
   assert.equal(s.calls.length, 0);
 });

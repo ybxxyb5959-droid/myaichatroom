@@ -96,9 +96,10 @@ test('HTTP origin, rebinding, traversal and old feature endpoints stay protected
     req.on('error', reject);
   });
   assert.equal(host, 403);
-  for (const url of ['/api/house', '/api/dev/state', '/config.json', '/house.js', '/vendor/addons/..%2f..%2fpackage.json']) assert.equal((await fetch(s.base + url)).status, 404, url);
+  for (const url of ['/api/dev/state', '/config.json', '/vendor/addons/..%2f..%2fpackage.json']) assert.equal((await fetch(s.base + url)).status, 404, url);
+  for (const url of ['/api/house', '/house.js']) assert.equal((await fetch(s.base + url)).status, 200, url);
   assert.equal((await fetch(s.base + '/world.html')).status, 200);
-  for (const asset of ['/assistant.js', '/format.mjs', '/status.mjs', '/discussion-stage.mjs']) {
+  for (const asset of ['/assistant.js', '/format.mjs', '/status.mjs', '/discussion-stage.mjs', '/dot-characters.mjs']) {
     const response = await fetch(s.base + asset);
     assert.equal(response.status, 200, asset);
     assert.match(response.headers.get('content-type'), /javascript/);
