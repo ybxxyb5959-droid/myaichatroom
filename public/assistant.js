@@ -1,6 +1,8 @@
 // Personal assistant UI; the existing portraits and group-chat layout are reused.
-import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML, houseEventHTML } from './format.mjs';
+import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML } from './format.mjs';
 import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
+import { createDiscussionStage } from './discussion-stage.mjs';
+import { dotCharacters, dotCharacter } from './dot-characters.mjs';
 
 const $ = (s) => document.querySelector(s);
 const IDS = ['gemini', 'gpt', 'claude'];
@@ -27,14 +29,14 @@ const EXAMPLES = [
 // The usage tour: one spotlight per control, in the order a new user needs them. Plain words, no jargon.
 const TOUR = [
   { title: '어서 와요!' },
-  { sel: '#input', title: '말 걸어 보기', text: '수다에는 가끔씩 참여하고, 조사·이미지 같은 작업 요청에는 연결된 AI들이 모두 반응해요. Shift+Enter로 줄을 바꾸고, @로 멘션할 수 있어요.' },
+  { sel: '#input', title: '말 걸어 보기', text: '방을 켜면 각 AI가 새 메시지를 읽고 말하거나 넘어가요. Shift+Enter로 줄을 바꾸고, @로 멘션할 수 있어요.' },
   { sel: '#members', side: true, title: 'AI 친구들', text: '왼쪽에 AI들이 있어요.  남은 한도와 연결상태를 확인 할 수 있어요.' },
   { sel: '#members .switch', side: true, title: '참여 스위치', text: '참여를 끄면 AI는 쉬어요. 사용량을 아끼고 싶을 때 써 보세요. 다시 켜면 돌아와요.' },
   { sel: '#modelPicker', title: '누가 답할지, 어떤 모델인지', text: '참여할 AI를 켜고 끄고, AI들의 “모델”을 바꿀 수 있어요. 사용량에 따라 조절해보세요.' },
-  { sel: '#recipientHint', title: '누가 답할지', text: 'AI 이름이나 별명("클로드야", "젬짱")으로 부르면 그 AI가, "얘들아"처럼 부르면 모두가 답해요. 아무도 안 부르면 상황에 맞는 AI 한 명이 답해요(사용량 절약).' },
+  { sel: '#recipientHint', title: '자율 대화', text: '대표 답변자를 뽑지 않아요. 각 AI가 따로 읽고 답하며, @이름이나 답장은 그 AI가 먼저 읽게 해요. 다른 AI도 참여할 수 있어요.' },
   { sel: '#debateSwitch', title: '토론 모드', text: '중요한 결정을 할때, AI들이 각자 의견을 내고, 서로 검토한 뒤, 하나의 결론으로 정리해 줘요. 시간이 더 걸리고 한도소모가 클 수 있어요.' },
-  { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 AI들이 알아서 서로 수다를 떨어요. 내가 말을 걸면 바로 멈추고 먼저 답해요. 앱이 꺼져 있을 땐 아무것도 하지 않아요.' },
-  { sel: '#levelSeg', side: true, title: '얼마나 떠들까', text: ' AI끼리의 대화 빈도를 정해요. 높을수록 자주 떠들고 사용량도 늘어요.' },
+  { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 사용자 메시지와 동료의 말에 각자 반응해요. 최대 3개의 호출이 동시에 진행돼요. 끄면 진행 중인 일반 대화도 중단해요.' },
+  { sel: '#boostSeg', side: true, title: '⚡ 진심모드', text: '복잡한 요청은 더 강한 모델로 생각해요. 자동·부를 때만·끔을 선택할 수 있어요. 대화 속도는 바뀌지 않아요.' },
   { sel: '#meEdit', side: true, title: '이름 바꾸기', text: 'AI들은 내 이름을 기억해요.' },
   { sel: '#webSearchField', side: true, title: '인터넷 검색', text: 'AI가 인터넷에서 찾아보고 답해요. 모든 AI가 지원하는 건 아니니, 켠 뒤 나오는 안내를 확인하세요.' },
   { sel: '#guideButtons', side: true, title: '설정은 언제든 다시', text: 'AI 연결과 모델 설정, 사용법은 여기서 언제든 다시 열 수 있어요.' },
@@ -56,6 +58,7 @@ const wave = (text) => `<span class="typing-wave" aria-label="${esc(text)}">${[.
 const runOpen = new Map(); // discussion runs the user opened or closed by hand
 const input = $('#input');
 const tl = $('#timeline');
+const renderDiscussionStage = createDiscussionStage($('#discussionStage'));
 
 // ---------- helpers ----------
 function toast(text) {
@@ -139,9 +142,7 @@ function messageNode(m) {
   if (m.from === 'system') {
     if (m.kind === 'house-event') {
       node.className = 'sys k-house-event';
-      node.innerHTML = houseEventHTML(m.text, m.houseEvent?.id);
-      const button = node.querySelector('[data-house-event]');
-      if (button) button.onclick = () => window.dispatchEvent(new CustomEvent('house-open-event', { detail: { id: Number(button.dataset.houseEvent) } }));
+      node.textContent = m.text;
       return node;
     }
     if (m.kind === 'house-build') {
@@ -168,11 +169,13 @@ function messageNode(m) {
     node.innerHTML = `${badge}${who}${esc(m.text)}${m.detail ? `<details class="error-details"><summary>자세히</summary>${esc(m.detail)}</details>` : ''}`;
     return node;
   }
-  const mine = m.from === 'user';
+  const mine = m.from === 'user' && !m.guestId;
   const who = member(m.from);
   node.className = `msg ${mine ? 'mine' : ''} ${m.phase === 'final' ? 'final' : ''}`;
   const face = who ? `<img class="m-av clickable" data-profile="${who.id}" role="button" tabindex="0" src="/avatars/${who.id}-pixel-128.png" alt="${esc(who.name)} 프로필 보기">` : '<div class="m-av"></div>';
-  const attachment = m.attach?.path ? `<img class="att-img" src="/ws/${m.attach.path.split('/').map(encodeURIComponent).join('/')}" alt="${esc(m.attach.label || '첨부 사진')}">${m.attach.generated ? `<small>${esc(m.attach.label)}</small>` : ''}` : '';
+  const attachment = !m.attach?.path ? '' : /\.(png|jpe?g|gif|webp|svg)$/i.test(m.attach.path)
+    ? `<img class="att-img" src="/ws/${m.attach.path.split('/').map(encodeURIComponent).join('/')}" alt="${esc(m.attach.label || '첨부 사진')}">${m.attach.generated ? `<small>${esc(m.attach.label)}</small>` : ''}`
+    : `<button type="button" class="model-pill" data-attachment>${esc(m.attach.path)} · 열기</button>`;
   const game = m.game?.path ? `<button type="button" class="model-pill" data-game>${esc(m.game.title)} · 게임 열기</button>` : '';
   const memo = m.note?.path ? `<button type="button" class="model-pill" data-note>📝 ${esc(m.note.title)} · 메모 열기</button>` : '';
   const links = mine ? [] : extractLinks(m.text || '');
@@ -180,7 +183,7 @@ function messageNode(m) {
   const phase = m.phase === 'final' ? '<span class="phase final-tag">최종 답변</span>'
     : m.phase && m.phase !== 'answer' ? `<span class="phase">${esc(PHASES[m.phase] || m.phase)}</span>` : '';
   node.innerHTML = `${face}<div class="m-body">
-    <div class="m-head"><span class="n">${esc(who?.name || m.from)}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${phase}</div>
+    <div class="m-head"><span class="n">${esc(m.displayName || who?.name || (m.from === 'user' ? state.room.userName : m.from))}${m.from === 'user' && m.guestId ? ' · 친구' : ''}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${phase}</div>
     <div class="line"><div class="bubble"><div class="text">${bodyHTML(m)}</div>${attachment}${game}${memo}${sources}</div></div></div>`;
   const bubble = node.querySelector('.bubble');
   if (m.replyPreview) {
@@ -219,6 +222,7 @@ function messageNode(m) {
   node.querySelector('.m-body').append(actions);
   if (who) node.style.setProperty('--c', who.color);
   node.querySelector('[data-note]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.note.path); });
+  node.querySelector('[data-attachment]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.attach.path); });
   node.querySelector('[data-game]')?.addEventListener('click', () => {
     setWorkspaceOpen(true);
     openFile(m.game.path);
@@ -309,7 +313,14 @@ function stateClass(s) {
   return { '생성 중': 'busy', 완료: 'ok', 실패: 'fail', 제외: 'off' }[s.status] || 'wait';
 }
 function renderProgress() {
-  const a = state.room.active;
+  const stick = distance() < 100;
+  renderDiscussionStage(state.room);
+  if (stick) tl.scrollTop = tl.scrollHeight;
+  const typing = state.members.filter((m) => m.typing);
+  const a = state.room.active || (typing.length ? {
+    mode: 'chat',
+    states: Object.fromEntries(typing.map((m) => [m.id, { status: '생성 중' }])),
+  } : null);
   const box = $('#typing');
   box.classList.toggle('on', !!a);
   if (!a) { box.replaceChildren(); return; }
@@ -324,8 +335,8 @@ function renderProgress() {
     box.innerHTML = `<div class="pg-ais">${chips}</div>`;
   }
 }
-// Why the automatic chat rests today: the day's call limit of the chosen level is used up, or an error stopped it.
-const restText = (room) => (room.auto.usage.calls >= room.autoDaily ? '오늘 자동 대화 한도를 다 썼어요 · 활동량을 올리면 이어가요' : '오늘의 자동 대화는 쉬고 있어요');
+// A provider error can pause automatic calls; an app-defined daily call cap is no longer used.
+const restText = () => '오류로 자동 대화를 쉬고 있어요 · 연결 상태를 확인해 주세요';
 function renderRoomSub() {
   const room = state.room;
   $('#roomSub').textContent = room.active || pending ? (room.discussion ? '토론하는 중...' : '입력중...')
@@ -407,30 +418,18 @@ function renderControls() {
   const busy = !!room.active || pending;
   $('#members').replaceChildren(...state.members.map((m) => {
     const li = document.createElement('li');
-    const ready = state.catalog[m.id].connected;
+    const ready = m.available;
     li.className = `member ${!ready ? 'st-missing' : !room.enabled[m.id] ? 'st-off' : ''}`;
     li.style.setProperty('--c', m.color);
     const settings = bag()[m.id];
     const live = room.active?.states[m.id];
-    // What the member is doing (work, Talk, house) comes from the server's own facts; otherwise the connection status.
-    const doing = ['work', 'talk', 'house'].includes(m.activity?.kind) ? `<span class="m-doing">${esc(m.activity.text)}</span>` : '';
+    // What the member is doing comes from the server's own facts; otherwise the connection status.
+    const doing = ['work', 'talk', 'world'].includes(m.activity?.kind) ? `<span class="m-doing">${esc(m.activity.text)}</span>` : '';
     li.innerHTML = `<div class="av-wrap" data-profile="${m.id}" role="button" tabindex="0" aria-label="${esc(m.name)} 프로필 보기"><img class="av" src="/avatars/${m.id}-pixel-128.png" alt=""><span class="st-dot"></span></div>
       <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div>
       <div class="m-status">${live && live.status !== '대기' ? (live.status === '생성 중' ? wave(room.discussion && live.phase === 'review' ? '토론하는 중...' : '입력중...') : esc(live.status)) : doing || dot(statusOf(m.id, settings.model, true))}</div>
       <div class="member-model">${room.discussion ? '토론 · ' : ''}${esc(settingText(settings))}</div>${limitHTML(m.id)}</div>
       <label class="switch" title="대화 참여"><input type="checkbox" aria-label="${esc(m.name)} 대화 참여" ${room.enabled[m.id] && ready ? 'checked' : ''}><span></span></label>`;
-    if (room.quotaRest?.[m.id]) {
-      const resume = document.createElement('button');
-      resume.type = 'button';
-      resume.className = 'model-pill';
-      resume.textContent = room.quotaRest[m.id].autoResume ? '자동 복귀 끄기' : '자동 복귀 켜기';
-      resume.setAttribute('aria-label', `${m.name} ${resume.textContent}`);
-      resume.addEventListener('click', (e) => {
-        e.stopPropagation();
-        update({ enabled: { [m.id]: !room.quotaRest[m.id].autoResume } });
-      });
-      li.querySelector('.m-info').append(resume);
-    }
     // The member row only toggles participation; targeted chat belongs to the bottom switch.
     li.addEventListener('click', (e) => {
       if (!e.target.closest('.switch, [data-profile], button')) ready ? update({ enabled: { [m.id]: !room.enabled[m.id] } }) : openSetup();
@@ -442,7 +441,7 @@ function renderControls() {
     return li;
   }));
   // Everyone in the room: me plus each AI that is on and connected.
-  const here = 1 + IDS.filter((id) => room.enabled[id] && state.catalog[id].connected).length;
+  const here = 1 + IDS.filter((id) => room.enabled[id] && state.catalog[id].available).length;
   $('#memberCount').textContent = String(here);
   $('#headCount').textContent = String(here);
   $('#headCount').setAttribute('aria-label', `참여자 ${here}명`);
@@ -458,11 +457,11 @@ function renderControls() {
   const sel = room.selected;
   const pill = $('#modelPicker');
   if (room.discussion) {
-    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].connected);
+    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
     pill.style.setProperty('--c', 'var(--accent)');
     pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">토론</span><span class="pk-model">${joined.length}명 · 종합 ${esc(nameOf(room.synthesizer))}</span><span class="caret">⌄</span>`;
   } else {
-    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].connected);
+    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
     pill.style.setProperty('--c', 'var(--accent)');
     pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">${joined.length}명 참가 중</span><span class="caret">⌄</span>`;
   }
@@ -482,21 +481,21 @@ function renderControls() {
   renderAuto();
   renderDetails();
 }
-// Auto chat settings: one simple level (낮음/중간/높음) plus, under "고급", an optional model per AI.
-// Activity is described by how often things happen (cooldowns), not by a daily count. AI calls keep an
-// internal safety cap; life in the house needs no call and is limited only by these gaps.
-const LEVEL_HINTS = {
-  low: '조용하게 가끔 활동해요',
-  medium: '적당히 대화하고 활동해요',
-  high: '시끌벅적하게 자주 대화해요 · 사용량이 가장 많아요',
+const BOOST_HINTS = {
+  auto: '복잡한 요청이면 더 강한 모델로 답해요 · 사용량이 더 들 수 있어요',
+  manual: '진지하게 답해 달라고 하거나 /boost @멤버로 부를 때만 켜요',
+  off: '항상 평소 모델 설정으로 답해요',
 };
 function renderAuto() {
   const a = state.room.auto;
   $('#autoSleep').value = String(a.sleepMinutes);
-  $('#levelSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.level === a.level));  $('#levelHint').textContent = LEVEL_HINTS[a.level];
-  $('#levelHint').title = '';
+  $('#boostSeg').querySelectorAll('button').forEach((b) => {
+    const on = b.dataset.boost === state.room.boostMode;
+    b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+  });
+  $('#boostHint').textContent = BOOST_HINTS[state.room.boostMode];
   // Only a problem is worth a line here; the rest is explained by the tour and under "자세히".
-  const note = !a.on ? '' : state.room.autoSleeping ? '잠들어 있어요. 말 걸면 다시 깨어나요.' : state.room.autoRest ? `${restText(state.room)}.` : !state.room.autoReady ? '대화할 수 있는 AI가 없어 짧은 대사만 나와요.' : '';
+  const note = !a.on ? '' : state.room.autoSleeping ? '잠들어 있어요. 말 걸면 다시 깨어나요.' : state.room.autoRest ? `${restText(state.room)}.` : !state.room.autoReady ? '대화할 수 있는 AI가 없어 기다리고 있어요.' : '';
   $('#autoNote').textContent = note;
   $('#autoNote').hidden = !note;
 }
@@ -521,10 +520,9 @@ function renderDetails() {
     const use = state.room.autoUses[id];
     return `<div class="d-ai"><b>${esc(nameOf(id))}</b> <small>${esc(model)}</small><small>자동 대화 모델 ${esc(settingText(use))}</small><div class="conn-line">${connBadges(id, model)}</div>${limits}${raw ? `<pre>${esc(raw)}</pre>` : ''}</div>`;
   }).join('') + (state.usage ? '<button type="button" class="model-pill" id="usageRefresh">남은 한도 새로 확인</button>' : '');
-  $('#detailsBody').innerHTML = `${ai}<div class="d-ai"><b>오늘 사용 기록</b>
-    <div>자동 대화 실제 AI 호출 ${u.calls} / ${state.room.autoDaily}번</div><div>내 질문에 쓴 AI 호출 ${u.asked}번</div>
-    <div>자동 창작 ${u.creations || 0} / 2개 · 새 사진 생성 ${u.photos || 0} / 1회 · 공동 게임 ${u.games || 0} / 1개</div>
-    <small>사진 생성과 공동 게임 제작도 자동 호출 예산에 포함돼요. 게임 제작은 최대 3차례, 플레이에는 AI 호출이 없어요.</small>
+  $('#detailsBody').innerHTML = `${ai}<div class="d-ai"><b>사용 기록</b>
+    <div>일반 대화 AI 호출 ${u.calls}번</div><div>토론에 쓴 AI 호출 ${u.asked}번</div>
+    <small>일반 대화 안에서 건축과 파일·게임 제작을 함께 해요. 별도 건축 차례나 정해진 게임 제작 순서는 없어요. 호출 실패는 20초부터 최대 5분까지 기다려요.</small>
     ${u.stopped ? `<div>자동 호출 중단: ${esc(kindText(u.stopped))}</div>` : ''}${a.lastError ? `<pre>${esc(nameOf(a.lastError.id))} · ${esc(a.lastError.detail)}</pre>` : ''}
     <small>횟수는 이 앱이 센 값이며, 구독 한도의 실제 소비량과는 다를 수 있어요.</small></div>`;
   // Each AI writes its own short memo (speech style, how it calls people). Here it can be read or cleared.
@@ -541,11 +539,9 @@ function renderDetails() {
   }).join('');
   $('#detailsBody').insertAdjacentHTML('beforeend', `<details class="d-ai memo-box" id="memoBox" ${memoBoxOpen ? 'open' : ''}>
     <summary><b>AI 개인 메모</b> <small>${filled ? `${filled}명이 적어 둠` : '아직 없음'}</small></summary>
-    <label class="memo-on"><input type="checkbox" id="memoOn" ${state.room.memoOn ? 'checked' : ''}> 메모 쓰기 (끄면 기억하지 않아요)</label>
     ${memoRows}
     <small>AI가 대화하면서 말투, 호칭, 다른 멤버와의 관계를 스스로 적어 두는 짧은 메모예요. 이 PC에만 저장돼요.</small></details>`);
   $('#memoBox').addEventListener('toggle', (e) => { memoBoxOpen = e.target.open; });
-  $('#memoOn').onchange = (e) => update({ memoOn: e.target.checked });
   $('#detailsBody').querySelectorAll('[data-memo-clear]').forEach((b) => b.addEventListener('click', () => update({ memos: { [b.dataset.memoClear]: '' } })));
   $('#detailsBody').querySelectorAll('[data-memo-toggle]').forEach((b) => b.addEventListener('click', () => {
     const id = b.dataset.memoToggle;
@@ -562,7 +558,7 @@ function renderFiles() {
   $('#wsFiles').replaceChildren();
   if (!state.files.length) { $('#wsFiles').textContent = '함께 만든 게임과 사진·그림이 여기에 표시됩니다.'; return; }
   for (const f of state.files) {
-    const game = f.activity === 'game';
+    const game = f.activity === 'game' || /\.html?$/i.test(f.path);
     const drawing = f.activity === 'postcard' || /\.svg$/i.test(f.path);
     const kind = game ? '게임' : drawing ? '그림' : f.image ? '사진' : '파일';
     const title = f.title || (kind === '파일' ? f.path.split('/').at(-1) : kind);
@@ -934,9 +930,9 @@ function renderSetup() {
       return `<li><b>${avatar(id)} ${esc(nameOf(id))}</b><span><span class="cs ${cs.key}">${esc(cs.text)}</span> <code>${esc(modelLabel(id, cur))}</code>${rec && cur.model === rec.model ? ' <span class="tag rec">추천</span>' : ''}</span></li>`;
     }).join('')}</ul>
       <div class="howto"><b>이렇게 쓰면 돼요</b><ol class="how">
-        <li>수다는 자유롭게 참여하고, 조사·이미지 같은 작업 요청에는 <b>연결된 AI들이 모두</b> 반응해요.</li>
-        <li><code>@Claude</code>처럼 이름을 쓰면 그 AI에게만 물어봐요.</li>
-        <li>위쪽 <b>Talk on</b>을 켜면 AI들이 알아서 서로 수다를 떨어요.</li>
+        <li>방을 켜면 각 AI가 <b>스스로 답하거나 넘어가요.</b> 대표 답변자는 정하지 않아요.</li>
+        <li><code>@Claude</code>처럼 이름을 쓰면 그 AI가 먼저 읽어요. 다른 AI도 반응할 수 있어요.</li>
+        <li><b>Talk on</b>은 일반 대화 전체의 켜기·끄기예요. 토론은 별도 스위치로 요청해요.</li>
         <li>궁금한 건 왼쪽 <b>[사용법 다시 보기]</b>에서 언제든 다시 볼 수 있어요.</li></ol></div>
       ${connected.length ? '' : '<p class="hint warn">아직 연결된 AI가 없어요. 이전으로 돌아가 <b>“어떻게 하나요?”</b>를 확인해 보세요. 그냥 시작해도 되고, 나중에 다시 열 수 있어요.</p>'}`;
     acts.innerHTML = '<button type="button" class="model-pill" data-act="prev">이전</button><span class="grow"></span><button type="button" class="model-pill primary" data-act="start">시작하기</button>';
@@ -1073,6 +1069,22 @@ async function attach(file) {
 }
 
 // ---------- events ----------
+// Reuse the workbench's original dot pets and staggered wave on the empty chat screen.
+$('#emptyCharacters').innerHTML = dotCharacters.map((rows, i) => `<div class="empty-character" style="--index:${i}">${dotCharacter(i)}</div>`).join('');
+const dotTitle = $('#emptyDotTitle'), dotContext = dotTitle.getContext('2d');
+const dotSource = document.createElement('canvas');
+dotSource.width = dotTitle.width; dotSource.height = dotTitle.height;
+const dotSourceContext = dotSource.getContext('2d');
+dotSourceContext.font = 'bold 23px "Malgun Gothic", sans-serif';
+dotSourceContext.textAlign = 'center';
+dotSourceContext.fillText(dotTitle.getAttribute('aria-label'), 170, 29);
+const dotPixels = dotSourceContext.getImageData(0, 0, 340, 40).data;
+dotContext.fillStyle = '#111';
+for (let y = 0; y < 40; y += 2) for (let x = 0; x < 340; x += 2) {
+  if (dotPixels[(y * 340 + x) * 4 + 3] > 70) {
+    dotContext.beginPath(); dotContext.arc(x, y, .72, 0, Math.PI * 2); dotContext.fill();
+  }
+}
 $('#examples').replaceChildren(...EXAMPLES.map((x) => {
   const b = document.createElement('button');
   b.type = 'button';
@@ -1103,7 +1115,7 @@ async function refreshPreview() {
     if (r.needTwo) text = '토론하려면 AI를 2명 이상 불러주세요';
     else if (!r.ids.length) text = '답할 수 있는 AI가 없어요';
     else if (r.kind === 'discussion') text = `${names}가 토론${out}`;
-    else if (r.kind === 'auto') text = `자동 선택 · ${names}`;
+    else if (r.kind === 'room') text = state.room.auto.on ? '각 AI가 자율적으로 답해요 · @이름은 우선 호출' : '방이 꺼져 있어요 · 켜기를 눌러 대화를 시작하세요';
     else if (r.ids.length === 1) text = `${names}에게 질문${out}`;
     else text = `${names}가 답변${out}`;
     hint.textContent = text; hint.classList.toggle('warn', !!r.needTwo || !r.ids.length);
@@ -1179,9 +1191,9 @@ const toggleAuto = () => update({ auto: { on: !state.room.auto.on } });
 $('#chatterBtn').onclick = toggleAuto;
 $('#powerBtn').onclick = toggleAuto;
 $('#autoSleep').onchange = (e) => update({ auto: { sleepMinutes: Number(e.target.value) } });
-$('#levelSeg').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-level]');
-  if (b) update({ auto: { level: b.dataset.level } });
+$('#boostSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-boost]');
+  if (b) update({ boostMode: b.dataset.boost });
 });
 $('#detailsBox').addEventListener('toggle', () => { if (state) renderDetails(); });
 $('#openSetup').onclick = openSetup;
@@ -1278,7 +1290,6 @@ $('#loadMore').onclick = async () => {
 function connect() {
   const events = new EventSource('/events');
   events.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
-  events.addEventListener('house', () => window.dispatchEvent(new Event('house-update')));
   events.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
     if (state.messages.some((x) => x.id === m.id)) return;

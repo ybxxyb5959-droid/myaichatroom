@@ -112,12 +112,12 @@ test('a recent house event reaches Talk only as a light hint or a scripted pair 
 function adapter() {
   const calls = [];
   return { calls, available: () => Object.fromEntries(IDS.map((id) => [id, true])), loginStatus: async () => ({ status: 'ok' }), listModels: async () => [],
-    chat: async (id, brief, prompt) => { calls.push({ id, auto: brief.startsWith(AUTO_BRIEF), prompt }); return { ok: true, text: `${id}의 말` }; } };
+    chat: async (id, brief, prompt) => { calls.push({ id, auto: brief.includes('## 응답 형식'), prompt }); return { ok: true, text: brief.includes('## 응답 형식') ? JSON.stringify({ action: 'say', messages: [`${id}의 말`] }) : `${id}의 말` }; } };
 }
 async function start(t, { clock, root, usage = null } = {}) {
   root ??= temp(t, 'fun-app-');
   const a = adapter();
-  const app = createAssistantServer({ root, cfg: { ...loadConfig(), autoSleepMinutes: 0 }, adapter: a, usage, greetings: false, clock: () => clock.t, random: seeded(4), autoTickMs: 3600000, pairDelayMs: 0 });
+  const app = createAssistantServer({ root, cfg: { ...loadConfig(), autoSleepMinutes: 0 }, adapter: a, usage, clock: () => clock.t, random: seeded(4), autoTickMs: 3600000, wait: async () => {} });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
   const url = `http://127.0.0.1:${app.server.address().port}`;
@@ -126,30 +126,19 @@ async function start(t, { clock, root, usage = null } = {}) {
 }
 const MIN = 60000, HOUR = 60 * MIN;
 
-test('shares are selected automatically, follow the level cooldown, slow down when the user is away, and cost no call', async (t) => {
+test('legacy house scene sharing stays disabled even when its saved schedule is due', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, { clock });
   await s.post('/api/check/login', {});
   await s.post('/api/room', { auto: { on: true, level: 'high' } });
   await s.post('/api/send', { text: '오늘 뭐 했어?' }); // the user is here (this question costs no call)
   clock.t += 30 * MIN;
-  const first = s.app.funTick().share;
-  assert.ok(first);
-  const msg = s.app.store.messages.at(-1);
-  assert.equal(msg.auto, 'life'); assert.match(msg.attach.path, /^life\/.*\.svg$/); assert.match(msg.attach.label, /AI 호출 없음/);
-  assert.match(s.app.activity.list({ kind: 'creation' })[0].text, /일상 공유/);
-  const gap = s.app.room.life.shareAt - clock.t;
-  assert.ok(gap >= SHARE_GAP.high * 0.7 && gap <= SHARE_GAP.high * 1.3, `normal gap while the user is around: ${gap}`);
-  clock.t += gap - MIN; assert.equal(s.app.funTick().share, undefined, 'inside the cooldown');
-  clock.t += 2 * MIN;
-  const second = s.app.funTick().share;
-  assert.ok(second); assert.notEqual(second.theme, first.theme);
-  // The user has now been away for over three hours: the next gap doubles.
+  await s.app.tick();
   clock.t += 4 * HOUR;
-  assert.ok(s.app.funTick().share);
-  const away = s.app.room.life.shareAt - clock.t;
-  assert.ok(away >= SHARE_GAP.high * 0.7 * 2 && away <= SHARE_GAP.high * 1.3 * 2, String(away));
-  assert.equal(s.calls.length, 0);
+  await s.app.tick();
+  assert.ok(!s.app.store.messages.some((m) => m.auto === 'life'));
+  assert.equal(s.app.store.listFiles().filter((f) => f.path.startsWith('life/')).length, 0);
+  assert.ok(s.calls.length > 0);
 });
 
 test('automatic activity never starts a chat game and the removed game participation endpoints are unavailable', async (t) => {
@@ -161,9 +150,7 @@ test('automatic activity never starts a chat game and the removed game participa
   await s.post('/api/room', { auto: { on: true, level: 'high' } });
   for (let i = 0; i < 40; i++) {
     clock.t += 31 * MIN;
-    const out = s.app.funTick();
-    assert.equal(out.started, undefined);
-    assert.equal(out.game, undefined);
+    await s.app.tick();
   }
   assert.equal(s.app.view().room.game, undefined);
   assert.equal(s.app.activity.list({ kind: 'game' }).length, 0);
@@ -172,41 +159,36 @@ test('automatic activity never starts a chat game and the removed game participa
     const response = await fetch(s.url + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'old-game', choice: 0 }) });
     assert.equal(response.status, 404);
   }
-  assert.equal(s.calls.length, 0);
+  assert.ok(s.calls.length > 0);
 });
 
-test('a helpful memo is selected automatically only with enough activity; "오늘 뭐 했어?" is answered without a call', async (t) => {
+test('activity logs no longer generate notes or intercept the owner with a canned digest', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, { clock });
   await s.post('/api/check/login', {});
   await s.post('/api/room', { auto: { on: true } });
   clock.t += 2 * HOUR;
-  assert.equal(s.app.funTick().note, null, 'no meaningful activity: no memo');
+  await s.app.tick();
   const add = (kind, actors, text) => s.app.activity.add({ kind, actors, text });
   add('task', ['claude'], '"로그인 오류 수정" 작업 완료');
   add('task', ['gpt'], '"집 생활" 작업 완료');
   clock.t += 31 * MIN;
-  const note = s.app.funTick().note;
-  assert.ok(note);
-  const file = path.join(s.root, 'workspace', note.path);
-  assert.ok(fs.existsSync(file) || fs.readdirSync(s.root, { recursive: true }).some((f) => String(f).endsWith(path.basename(note.path))));
-  const msg = s.app.store.messages.at(-1);
-  assert.equal(msg.note.path, note.path); assert.match(msg.text, /프로젝트 파일은 안 건드렸어/);
-  assert.equal(s.app.activity.list({ kind: 'note' }).length, 1);
+  await s.app.tick();
+  assert.equal(s.app.activity.list({ kind: 'note' }).length, 0);
+  assert.ok(!s.app.store.listFiles().some((f) => f.path.startsWith('notes/')));
   clock.t += 31 * MIN;
-  assert.equal(s.app.funTick().note, null, 'not again within the memo gap');
+  await s.app.tick();
   const before = s.calls.length;
   await s.post('/api/send', { text: '오늘 AI들 뭐 했어?' });
-  assert.equal(s.calls.length, before, 'no AI call');
-  const digest = s.app.store.messages.at(-1);
-  assert.equal(digest.kind, 'digest');
-  assert.match(digest.text, /로그인 오류 수정" 작업 완료/);
+  assert.equal(s.calls.length, before, 'send enqueues the message rather than choosing a responder');
+  assert.equal(s.app.store.messages.at(-1).from, 'user');
+  assert.ok(!s.app.store.messages.some((m) => m.kind === 'digest'));
   await s.post('/api/send', { text: 'Promise가 뭐야?' });
-  assert.equal(s.calls.length, before + 1, 'ordinary questions still go to one AI');
-  assert.equal(s.calls.filter((c) => c.auto).length, 0);
+  await s.app.tick(); clock.t += 12000; await s.app.tick();
+  assert.ok(s.calls.length > before);
 });
 
-test('a Talk round carries at most two short lines about recent house events', async (t) => {
+test('Talk keeps its existing round length without reviving legacy house events', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const root = temp(t, 'fun-hint-');
   const house = home(path.join(root, 'data', 'house.json')); enterLife(house, 1);
@@ -217,14 +199,8 @@ test('a Talk round carries at most two short lines about recent house events', a
   await s.post('/api/room', { auto: { on: true, level: 'low' } });
   clock.t += 30 * MIN; await s.app.tick();
   const talk = s.calls.filter((c) => c.auto);
-  assert.equal(talk.length, 3, 'a round is still three turns at the quiet level');
+  assert.equal(talk.length, 1, 'one member starts the silence rather than a forced three-turn round');
   const hinted = talk.filter((c) => c.prompt.includes('[최근 집 소식'));
-  assert.ok(hinted.length >= 1);
-  for (const c of hinted) {
-    const block = c.prompt.split('[최근 집 소식')[1];
-    assert.ok(block.split('\n').filter((l) => l.startsWith('- ')).length <= 2);
-    assert.match(block, /화해/);
-  }
-  assert.ok(talk.filter((c) => c.id === 'gemini').every((c) => !c.prompt.includes('[최근 집 소식')), 'Gemini was not part of the event');
-  assert.equal(relationOf(s.app.house, 'gpt', 'claude'), RELATION_START);
+  assert.equal(hinted.length, 0);
+  assert.equal(relationOf(new House(house.file, { ids: IDS, names }), 'gpt', 'claude'), RELATION_START);
 });

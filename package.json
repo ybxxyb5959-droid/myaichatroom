@@ -15,6 +15,7 @@
     "dist:win": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
+    "qrcode": "1.5.4",
     "three": "0.170.0"
   },
   "devDependencies": {

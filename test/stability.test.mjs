@@ -12,9 +12,7 @@ import { Store } from '../lib/store.mjs';
 import { writeJsonFile, readJsonFile } from '../lib/atomic.mjs';
 import { run, running, Adapters } from '../lib/agents.mjs';
 import { createAssistantServer, loadConfig } from '../server.mjs';
-import { House, HOUSE_LIMITS, HOUSE_BRIEF } from '../lib/house.mjs';
-import { LEVELS } from '../lib/auto.mjs';
-import { noteEvent } from '../lib/life.mjs';
+import { House } from '../lib/house.mjs';
 import { ACTIVITY_MAX } from '../lib/activity.mjs';
 import { UsageMonitor } from '../lib/usage.mjs';
 
@@ -102,7 +100,7 @@ test('Store retries Windows open/rename locks, commits memory only after append,
 test('corrupt JSON and incomplete JSONL are preserved, repaired and visibly reported without blocking startup', async (t) => {
   const root = temp(t), data = path.join(root, 'data');
   fs.mkdirSync(data, { recursive: true });
-  const files = ['state.json', 'workspace-meta.json', 'house.json', 'activity.json'];
+  const files = ['state.json', 'workspace-meta.json', 'world.json', 'activity.json'];
   for (const file of files) fs.writeFileSync(path.join(data, file), '{"broken":');
   const good = JSON.stringify({ id: 7, from: 'user', text: 'keep me', ts: 1 });
   fs.writeFileSync(path.join(data, 'messages.jsonl'), good + '\n{"id":8');
@@ -153,9 +151,10 @@ test('a forcibly terminated writer leaves committed chats, settings and house re
   assert.equal(app.store.messages[0].text, 'crash recovery');
   assert.equal(app.room.roomName, 'saved room');
   assert.equal(app.room.auto.features, undefined, 'legacy individual switches are no longer settings');
-  assert.equal(app.house.s.phase, 'life');
-  assert.equal(app.house.s.relations['claude:gpt'], 75);
-  assert.equal(app.house.s.events[0].text, 'saved event');
+  const house = new House(path.join(root, 'data/house.json'), { ids: IDS, names: {} });
+  assert.equal(house.s.phase, 'life');
+  assert.equal(house.s.relations['claude:gpt'], 75);
+  assert.equal(house.s.events[0].text, 'saved event');
   assert.equal(adapter.calls.length, 0);
 });
 
@@ -167,10 +166,10 @@ test('restart defers overdue activity, discards an old chat game and OFF drops p
   store.saveState();
   const { app, post, adapter } = await appAt(t, root, clock);
   assert.equal(app.room.game, undefined);
-  assert.equal(app.room.life.gameAt, undefined);
-  for (let i = 0; i < 50; i++) app.funTick();
-  assert.equal(app.store.messages.length, 0);
-  app.room.auto.usage.stopped = 'test';
+  assert.equal(app.room.life, undefined);
+  for (let i = 0; i < 50; i++) await app.tick();
+  assert.ok(app.store.messages.every((m) => m.kind === 'welcome'));
+  await post('/api/room', { auto: { on: false } });
   clock.now += 16 * MIN;
   await app.tick();
   await post('/api/room', { auto: { on: false } });
@@ -180,38 +179,28 @@ test('restart defers overdue activity, discards an old chat game and OFF drops p
   assert.equal(adapter.calls.length, 0);
 });
 
-test('accelerated 12-day life keeps events, house logs, activities and SVG files bounded without AI calls', async (t) => {
+test('accelerated 12-day activity keeps notes bounded and never mutates legacy house data or creates house scenes', async (t) => {
   const root = temp(t), clock = { now: new Date(2026, 9, 7, 10).getTime() };
   const house = new House(path.join(root, 'data/house.json'), { ids: IDS, names: {} });
   house.s.phase = 'life'; house.save();
-  const { app, post, adapter } = await appAt(t, root, clock);
+  const saved = fs.readFileSync(house.file, 'utf8');
+  const inactive = fake(); inactive.available = () => ({});
+  const { app, post, adapter } = await appAt(t, root, clock, inactive);
   await post('/api/room', { auto: { on: true, level: 'high' } });
-  const seen = new Set();
   for (let i = 0; i < 576; i++) {
     clock.now += 30 * MIN;
-    app.lifeTick();
-    noteEvent(app.house, { type: 'game', actors: IDS, text: `event ${i}` }, clock.now);
     app.activity.add({ kind: 'task', actors: ['gpt'], text: `작업 ${i} 완료` });
-    const out = app.funTick();
-    if (out.share) {
-      assert.ok(!seen.has(out.share.messageId)); seen.add(out.share.messageId);
-    }
-    assert.ok(app.house.s.log.length <= HOUSE_LIMITS.log);
-    assert.ok(app.house.s.events.length <= 30);
+    await app.tick();
     assert.ok(app.activity.entries.length <= ACTIVITY_MAX);
   }
-  assert.ok(seen.size > 80, `generated ${seen.size}`);
-  assert.equal(app.store.listFiles().filter((f) => f.path.startsWith('life/')).length, 80);
-  assert.ok(app.room.life.last.refs.length <= 30);
-  assert.ok(app.room.life.last.captions.length <= 20);
+  assert.equal(fs.readFileSync(house.file, 'utf8'), saved);
+  assert.equal(app.store.listFiles().filter((f) => f.path.startsWith('life/')).length, 0);
   assert.equal(adapter.calls.length, 0);
   assert.ok(JSON.parse(fs.readFileSync(app.activity.file)).entries.length <= ACTIVITY_MAX);
   await post('/api/room', { auto: { on: false } });
   const count = app.store.messages.length;
   clock.now += DAY;
-  assert.equal(app.lifeTick(), null);
-  assert.equal(app.funTick(), null);
-  assert.equal(await app.tick(), null);
+  await app.tick();
   assert.equal(app.store.messages.length, count);
 });
 
@@ -233,9 +222,7 @@ test('repeated SSE reconnects and shutdown leave no delayed posts or duplicate c
   assert.ok(connections <= 1, `remaining connections: ${connections}`);
   await app.close();
   clock.now += DAY;
-  assert.equal(await app.tick(), null);
-  assert.equal(app.lifeTick(), null);
-  assert.equal(app.funTick(), null);
+  await app.tick();
 });
 
 test('CLI missing, timeout, nonzero exit, cancellation and excessive output clean up children and abort listeners', async () => {
@@ -312,24 +299,26 @@ test('all automatic features share bounded timers and budgets over two accelerat
   const adapter = fake();
   adapter.chat = async (id, brief, prompt, options) => {
     adapter.calls.push({ id, at: clock.now, options });
-    return { ok: true, text: brief === HOUSE_BRIEF ? '{"say":"집에서 쉬는 중","actions":[]}' : '잠깐 쉬고 있어' };
+    return { ok: true, text: '{"action":"say","messages":["월드를 둘러보는 중"],"build":[{"op":"place","at":[2,1,2],"block":"stone"}]}' };
   };
-  const app = createAssistantServer({ root, cfg: cfg(), clock: () => clock.now, random: () => 0.3, adapter, greetings: false });
+  const app = createAssistantServer({ root, cfg: cfg(), clock: () => clock.now, random: () => 0.3, adapter, wait: async () => {} });
   try {
-    assert.equal(intervals.size, 2);
-    app.room.auto.on = true; app.room.auto.level = 'high'; app.house.s.phase = 'life';
+    assert.equal(intervals.size, 1);
+    app.runtime.start();
     for (let i = 0; i < 576; i++) {
       clock.now += 5 * MIN;
       for (const callback of intervals.values()) callback();
       await new Promise((resolve) => setImmediate(resolve));
-      assert.ok(app.room.auto.usage.calls <= LEVELS.high.daily);
-      assert.equal(intervals.size, 2);
+      assert.ok(Number.isSafeInteger(app.room.auto.usage.calls));
+      assert.ok(adapter.calls.length <= (i + 1) * 3, 'one timer starts at most three original room calls');
+      assert.equal(intervals.size, 1);
     }
     assert.ok(adapter.calls.length > 0);
-    assert.ok(app.store.messages.some((m) => m.auto === 'life'));
+    assert.equal(app.world.blocks.get('2,1,2'), 'stone');
+    assert.ok(!app.store.messages.some((m) => m.auto === 'life'));
     assert.ok(!app.activity.entries.some((entry) => entry.kind === 'game'), 'chat games are no longer automatic activities');
     const count = adapter.calls.length, messages = app.store.messages.length;
-    app.room.auto.on = false;
+    await app.runtime.stop();
     clock.now += DAY;
     for (const callback of intervals.values()) callback();
     await new Promise((resolve) => setImmediate(resolve));
@@ -341,19 +330,19 @@ test('all automatic features share bounded timers and budgets over two accelerat
     adapter.chat = (_id, _brief, _prompt, options) => new Promise((resolve) => {
       started = true;
       options.signal.addEventListener('abort', () => setTimeout(() => {
-        finished = true; resolve({ ok: true, text: '{"say":"late reply","actions":[]}' });
+        finished = true; resolve({ ok: true, text: '{"action":"say","messages":["late reply"],"build":[{"op":"place","at":[1,1,1],"block":"stone"}]}' });
       }, 5), { once: true });
     });
     const reopened = createAssistantServer({ root, cfg: cfg(), adapter, clock: () => clock.now, greetings: false });
-    assert.equal(intervals.size, 2);
-    reopened.room.auto.on = true;
+    assert.equal(intervals.size, 1);
+    reopened.runtime.start();
     clock.now += MIN;
-    const turns = reopened.house.s.turns;
+    const blocks = reopened.world.blocks.size;
     [...intervals.values()][0]();
     assert.equal(started, true);
     await reopened.close();
-    assert.equal(finished, true, 'close waits for the aborted house turn to settle');
-    assert.equal(reopened.house.s.turns, turns, 'late house replies are not applied');
+    assert.equal(finished, true, 'close waits for the aborted world turn to settle');
+    assert.equal(reopened.world.blocks.size, blocks, 'late world replies are not applied');
     assert.equal(intervals.size, 0);
   } finally { await app.close(); t.mock.restoreAll(); }
 });

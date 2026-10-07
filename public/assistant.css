@@ -85,10 +85,21 @@ button:disabled { opacity: .5; cursor: default; }
 .mini-av { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none; }
 
 /* ---------- empty conversation ---------- */
-.empty { padding: 40px 16px 10px; text-align: center; }
-.empty h2 { margin: 0 0 6px; font-size: 20px; }
-.empty p { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
-.examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; max-width: 760px; margin: 0 auto; }
+#empty { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 36px 16px; text-align: center; }
+#empty h2 { margin: 0; max-width: 100%; line-height: 0; }
+#empty p { margin: 0; color: var(--muted); font-size: 13px; }
+.empty-characters { display: flex; gap: 28px; align-items: end; color: #111; }
+.empty-character { display: grid; justify-items: center; }
+.empty-character svg { width: 68px; height: 68px; fill: currentColor; animation: empty-wave 1.8s ease-in-out infinite !important; animation-delay: calc(var(--index) * .2s) !important; }
+@keyframes empty-wave { 0%, 55%, 100% { transform: translateY(0); } 25% { transform: translateY(-9px); } }
+#emptyDotTitle { display: block; width: 340px; max-width: 100%; height: auto; }
+:root[data-theme="dark"] .empty-characters { color: #eee; }
+:root[data-theme="dark"] #emptyDotTitle { filter: invert(1); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .empty-characters { color: #eee; }
+  :root:not([data-theme="light"]) #emptyDotTitle { filter: invert(1); }
+}
+.examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 10px; width: 100%; max-width: 760px; margin: 0 auto; }
 .example { text-align: left; border: 1px solid var(--line-2); background: var(--panel); border-radius: 14px; padding: 12px 14px; font-size: 13.5px; line-height: 1.45; color: var(--text); }
 .example:hover { border-color: var(--accent); }
 .example .tag { display: table; margin-bottom: 5px; }
@@ -140,6 +151,33 @@ button:disabled { opacity: .5; cursor: default; }
 .stop-pill { border: 1px solid color-mix(in srgb, var(--err) 50%, var(--line-2)); background: var(--panel); color: var(--err); border-radius: 10px; padding: 4px 12px; font-size: 13px; font-weight: 650; }
 
 /* progress of the running answer */
+.discussion-stage { max-width: 440px; margin: 16px auto 8px; padding: 12px 8px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--panel); }
+.discussion-stage[hidden], .pixel-speech[hidden] { display: none; }
+.discussion-stage-title { font-size: 12px; color: var(--muted); text-align: center; min-height: 18px; }
+.discussion-cast { display: flex; justify-content: center; gap: clamp(8px, 3vw, 32px); padding-top: 10px; }
+.discussion-character { min-width: 0; width: 100px; text-align: center; }
+.discussion-character strong, .discussion-character small { display: block; font-size: 12px; }
+.discussion-character small { color: var(--muted); font-size: 10px; margin-top: 3px; }
+.discussion-character.is-muted { opacity: .45; }
+.discussion-actor { position: relative; width: 96px; margin: 0 auto; padding-top: 32px; }
+.discussion-sprite { display: block; fill: currentColor; image-rendering: pixelated; }
+.discussion-stage.is-running .discussion-sprite { animation: discussion-idle 3s steps(2, end) infinite; animation-delay: calc(var(--turn) * -.4s); }
+.discussion-character[data-phase="opinion"] .discussion-sprite { animation: discussion-speak .8s steps(2, end) infinite; }
+.discussion-character[data-phase="review"] .discussion-sprite { animation: discussion-review 1.4s steps(2, end) infinite; }
+.discussion-character[data-phase="final"] .discussion-sprite { animation: discussion-speak 1.2s steps(2, end) infinite; }
+.discussion-character.is-muted .discussion-sprite { animation: none; }
+.pixel-speech { position: absolute; top: 4px; left: 20px; width: 40px; height: 22px; display: flex; align-items: center; justify-content: center; gap: 4px; background: var(--panel); color: var(--accent); box-shadow: -3px 0 currentColor, 3px 0 currentColor, 0 -3px currentColor, 0 3px currentColor; }
+.pixel-speech::after { content: ''; position: absolute; bottom: -9px; left: 9px; width: 6px; height: 6px; background: currentColor; }
+.pixel-speech i { width: 4px; height: 4px; background: currentColor; animation: discussion-dot 1.2s steps(1, end) infinite; }
+.pixel-speech i:nth-child(2) { animation-delay: .2s; }
+.pixel-speech i:nth-child(3) { animation-delay: .4s; }
+@keyframes discussion-idle { 0%, 80%, 100% { transform: translateY(0); } 90% { transform: translateY(-3px); } }
+@keyframes discussion-speak { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+@keyframes discussion-review { 0%, 100% { transform: translateX(-3px); } 50% { transform: translateX(3px) translateY(3px); } }
+@keyframes discussion-dot { 0%, 75% { opacity: 0; } 16%, 74% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .discussion-stage .discussion-sprite, .discussion-stage .pixel-speech i { animation: none; }
+}
 .typing { min-height: 30px; }
 .typing-wave { display: inline-flex; white-space: pre; }
 .typing-wave > span { display: inline-block; animation: typing-wave 1.4s ease-in-out infinite; animation-delay: calc(var(--i) * .09s); }
@@ -266,12 +304,12 @@ button:disabled { opacity: .5; cursor: default; }
 .seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 650; }
 #autoField .field { gap: 6px; }
 #autoField .field-label { white-space: nowrap; flex-shrink: 0; }
-#levelSeg { flex-wrap: nowrap; flex-shrink: 0; gap: 2px; }
-#levelSeg button { padding-inline: 5px; white-space: nowrap; }
-/* The activity levels carry emoji labels: they get their own full-width row so nothing is cut off. */
-.field:has(#levelSeg) { flex-wrap: wrap; row-gap: 6px; }
-.field:has(#levelSeg) #levelSeg { width: 100%; flex-shrink: 1; }
-.field:has(#levelSeg) #levelSeg button { flex: 1 1 auto; min-width: 0; padding-inline: 1px; font-size: 11px; letter-spacing: -0.02em; }
+#boostSeg { flex-wrap: nowrap; flex-shrink: 0; gap: 2px; }
+#boostSeg button { padding-inline: 5px; white-space: nowrap; }
+/* Keep all three boost choices on a full-width row. */
+.field:has(#boostSeg) { flex-wrap: wrap; row-gap: 6px; }
+.field:has(#boostSeg) #boostSeg { width: 100%; flex-shrink: 1; }
+.field:has(#boostSeg) #boostSeg button { flex: 1 1 auto; min-width: 0; padding-inline: 1px; font-size: 11px; letter-spacing: -0.02em; }
 .advanced { margin-top: 12px; font-size: 12.5px; }
 .advanced summary { cursor: pointer; color: var(--muted); }
 .advanced input { width: 100%; padding: 8px; margin-top: 6px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; font-family: var(--mono); color: var(--text); }
@@ -363,10 +401,11 @@ button:disabled { opacity: .5; cursor: default; }
 .p-sec { font-size: 12px; font-weight: 700; color: var(--faint); }
 .p-lrow { display: flex; align-items: center; gap: 12px; }
 .p-lrow small, .p-plan { font-size: 12px; color: var(--faint); }
-.chatter-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-2); background: var(--panel); color: var(--muted); border-radius: 999px; padding: 4px 11px; font-size: 12.5px; }
-.chatter-btn i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.chatter-btn { display: flex; align-items: center; gap: 5px; min-height: 28px; margin-top: 2px; border: 0; background: transparent; color: var(--muted); border-radius: 6px; padding: 4px 8px 4px 0; font-size: 11px; }
+.chatter-btn:hover { background: var(--panel); }
+.chatter-btn i { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--faint); background: transparent; }
 .chatter-btn.on { color: var(--text); }
-.chatter-btn.on i { background: #3fa468; }
+.chatter-btn.on i { border-color: #3fa468; background: #3fa468; }
 .auto-models { display: grid; gap: 6px; margin: 6px 4px; }
 .auto-row { display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 10px; }
 .auto-row select { grid-column: 1 / -1; min-width: 0; }

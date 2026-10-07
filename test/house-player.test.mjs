@@ -112,7 +112,7 @@ test('keyboard controls ignore typing, serialize requests and stop on close, blu
   ready = false; press('e'); assert.equal(calls.length, 3);
 });
 
-test('player API works with Talk off, rejects invalid movement and never calls AI', async (t) => {
+test('the removed house player and its UI are unavailable and never call AI', async (t) => {
   const { root } = home(t);
   let calls = 0;
   const app = createAssistantServer({ root, cfg: loadConfig(), greetings: false,
@@ -121,12 +121,10 @@ test('player API works with Talk off, rejects invalid movement and never calls A
   t.after(() => app.close());
   const url = `http://127.0.0.1:${app.server.address().port}`;
   const post = (body) => fetch(url + '/api/house/player', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  assert.equal((await post({ action: 'interact' })).status, 400);
-  app.house.s.phase = 'life'; app.house.s.floors = { '0,0': 'wood', '1,0': 'wood' };
+  assert.equal((await post({ action: 'interact' })).status, 404);
   const response = await post({ action: 'move', dx: 1, dz: 0 });
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).player.x, 1);
-  assert.equal((await post({ action: 'move', dx: 1, dz: 1 })).status, 400);
+  assert.equal(response.status, 404);
+  assert.equal((await post({ action: 'move', dx: 1, dz: 1 })).status, 404);
   assert.equal(calls, 0);
-  for (const asset of ['house-pose.mjs', 'house-controls.mjs']) assert.equal((await fetch(`${url}/${asset}`)).status, 200);
+  for (const asset of ['house.js', 'house-pose.mjs', 'house-controls.mjs']) assert.equal((await fetch(`${url}/${asset}`)).status, 404);
 });

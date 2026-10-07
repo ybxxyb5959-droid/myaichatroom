@@ -6,7 +6,10 @@
 <title data-i18n="app.title">AI 단톡방</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
-<link rel="stylesheet" href="/house.css">
+<link rel="stylesheet" href="/share.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="theme-color" content="#141820">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='10' width='52' height='38' rx='12' fill='%23d97a3a'/%3E%3Cpath d='M20 48l-4 10 14-10z' fill='%23d97a3a'/%3E%3Ccircle cx='22' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='29' r='4' fill='%23fff'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -39,10 +42,10 @@
       <div class="sec-label">대화 설정</div>
       <div id="autoField">
         <div class="field">
-          <span class="field-label">AI 활동량</span>
-          <div class="seg" id="levelSeg" role="group" aria-label="AI 활동량"><button type="button" data-level="low">🌙 조용히</button><button type="button" data-level="medium">🙂 보통</button><button type="button" data-level="high">🎉 활발하게</button></div>
+          <span class="field-label">⚡ 진심모드</span>
+          <div class="seg" id="boostSeg" role="group" aria-label="진심모드"><button type="button" data-boost="auto">자동</button><button type="button" data-boost="manual">부를 때만</button><button type="button" data-boost="off">끔</button></div>
         </div>
-        <p class="hint" id="levelHint"></p>
+        <p class="hint" id="boostHint"></p>
         <p class="hint" id="autoNote" hidden></p>
         <div class="field">
           <label class="field-label" for="autoSleep">자동 잠들기</label>
@@ -73,10 +76,13 @@
       </button>
       <div class="head-title">
         <div class="t"><span id="headTitle">AI 단톡방</span> <span class="head-count" id="headCount" title="참여 중인 사람 수 (나 포함)"></span></div>
+        <button class="chatter-btn" id="chatterBtn" type="button" aria-pressed="true" title="AI들끼리 떠드는 Talk 켜기/끄기"><i aria-hidden="true"></i><span id="chatterText">Talk on</span></button>
       </div>
       <div class="head-actions">
-        <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" title="집 — AI들이 함께 짓는 공간" aria-expanded="false" aria-controls="house"><span aria-hidden="true" style="font-size:19px;line-height:1">🏠</span></button>
-        <button class="chatter-btn" id="chatterBtn" type="button" aria-pressed="true" title="AI들끼리 떠드는 Talk 켜기/끄기"><i aria-hidden="true"></i><span id="chatterText">Talk on</span></button>
+        <button class="icon-btn" id="shareBtn" type="button" aria-label="휴대폰 연결 및 친구 초대" title="휴대폰 연결 · 친구 초대">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="19" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 10 6-4M9 14l6 4" stroke="currentColor" stroke-width="1.7"/></svg>
+        </button>
+        <a class="icon-btn" id="worldBtn" href="/world.html" aria-label="건축 월드 열기" title="건축 월드 — AI들이 함께 만드는 3D 공간"><span aria-hidden="true" style="font-size:19px;line-height:1">🧱</span></a>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
@@ -90,11 +96,13 @@
     <div class="timeline" id="timeline">
       <button class="load-more" id="loadMore" type="button" hidden data-i18n="chat.loadMore">이전 대화 더 보기</button>
       <section class="empty" id="empty" hidden>
-        <h2>무엇을 도와드릴까요?</h2>
+        <div class="empty-characters" id="emptyCharacters"></div>
+        <h2><canvas id="emptyDotTitle" width="340" height="40" role="img" aria-label="대화를 시작해볼까요?">대화를 시작해볼까요?</canvas></h2>
         <p>예시를 누르면 입력창에 채워집니다. 바로 전송되지는 않습니다.</p>
         <div class="examples" id="examples"></div>
       </section>
       <div id="msgs"></div>
+      <section id="discussionStage" class="discussion-stage" aria-label="도트 캐릭터 토론" hidden></section>
     </div>
     <button class="jump" id="jump" type="button" hidden>최신 메시지로 ↓</button>
 
@@ -165,6 +173,7 @@
 </div>
 
 <script type="module" src="/assistant.js"></script>
-<script type="module" src="/house.js"></script>
+<script type="module" src="/share.js"></script>
+<script type="module" src="/pwa.js"></script>
 </body>
 </html>

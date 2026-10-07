@@ -24,6 +24,10 @@ async function launch() {
     backend.server.listen(0, '127.0.0.1', resolve);
   });
   const origin = `http://127.0.0.1:${backend.server.address().port}`;
+  if (!smoke) {
+    try { await backend.startExternal(); }
+    catch (error) { dialog.showErrorBox('외부 접속 실패 — PC에서는 계속 사용 가능', error.message); }
+  }
   const openExternal = (url) => {
     if (isExternalWebLink(url, origin)) shell.openExternal(url).catch((error) => console.error(error));
   };
@@ -50,6 +54,11 @@ async function launch() {
   window.on('closed', () => { window = null; });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: '앱', submenu: [
+      { label: '휴대폰 연결 (Tailscale)', click: async () => {
+        try {
+          await window.webContents.executeJavaScript("document.querySelector('#shareBtn').click()");
+        } catch (error) { dialog.showErrorBox('휴대폰 연결 안내', error.message); }
+      } },
       { label: '대화 데이터 폴더 열기', click: () => shell.openPath(root).then((error) => { if (error) dialog.showErrorBox('폴더 열기 실패', error); }) },
       { type: 'separator' },
       { label: '종료', role: 'quit' },
@@ -64,6 +73,72 @@ async function launch() {
   ]));
   await window.loadURL(origin);
   if (smoke) {
+    window.setMinimumSize(0, 0);
+    window.setContentSize(390, 844);
+    const emptyScreen = await window.webContents.executeJavaScript(`(async () => {
+      const deadline = Date.now() + 5000;
+      while (document.querySelector('#empty').hidden && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      const empty = document.querySelector('#empty');
+      const title = document.querySelector('#emptyDotTitle');
+      const pets = [...document.querySelectorAll('.empty-character svg')];
+      const examples = [...document.querySelectorAll('#examples button')];
+      const theme = document.documentElement.getAttribute('data-theme');
+      document.documentElement.setAttribute('data-theme', 'light');
+      const light = pets.map(pet => getComputedStyle(pet).fill);
+      const pixels = title.getContext('2d').getImageData(0, 0, title.width, title.height).data;
+      let visibleDots = 0;
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i + 3] > 0 && pixels[i] < 40 && pixels[i + 1] < 40 && pixels[i + 2] < 40) visibleDots++;
+      document.documentElement.setAttribute('data-theme', 'dark');
+      const dark = pets.map(pet => getComputedStyle(pet).fill);
+      const darkTitle = getComputedStyle(title).filter;
+      if (theme === null) document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', theme);
+      examples[0]?.click();
+      const exampleFilled = document.querySelector('#input').value === '최근 1년 사이 바뀐 국내 전기차 보조금 제도를 출처 링크와 함께 정리해 줘.';
+      const fits = [title, ...pets, ...examples].every(node => {
+        const r = node.getBoundingClientRect();
+        return r.left >= 0 && r.right <= innerWidth;
+      });
+      return { visible: !empty.hidden, title: title.getAttribute('aria-label'), count: pets.length,
+        examples: examples.length, exampleFilled, fits, width: innerWidth, visibleDots, light, dark, darkTitle,
+        delays: pets.map(pet => getComputedStyle(pet).animationDelay),
+        animation: pets.map(pet => getComputedStyle(pet).animationName),
+        below: document.querySelector('#examples').getBoundingClientRect().top >= title.getBoundingClientRect().bottom };
+    })()`);
+    if (!emptyScreen.visible || emptyScreen.title !== '대화를 시작해볼까요?' || emptyScreen.count !== 3
+      || emptyScreen.examples !== 4 || !emptyScreen.exampleFilled || !emptyScreen.fits || emptyScreen.width !== 390
+      || !emptyScreen.below || emptyScreen.visibleDots < 100
+      || emptyScreen.light.some(color => color !== 'rgb(17, 17, 17)')
+      || emptyScreen.dark.some(color => color !== 'rgb(238, 238, 238)') || emptyScreen.darkTitle !== 'invert(1)'
+      || emptyScreen.delays.join(',') !== '0s,0.2s,0.4s'
+      || emptyScreen.animation.some(name => name !== 'empty-wave'))
+      throw new Error('새 채팅방 도트 화면 확인 실패: ' + JSON.stringify(emptyScreen));
+    console.log('EMPTY_SCREEN_SMOKE ' + JSON.stringify(emptyScreen));
+    const sharingScreen = await window.webContents.executeJavaScript(`(async () => {
+      document.querySelector('#shareBtn').click();
+      const deadline = Date.now() + 5000;
+      while (!document.querySelector('[data-usage]').textContent && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      const panel = document.querySelector('.share-dialog');
+      const bounds = panel.getBoundingClientRect();
+      const result = { open: panel.open, fits: bounds.left >= 0 && bounds.right <= innerWidth,
+        usage: panel.querySelector('[data-usage]').textContent,
+        ownerQR: panel.querySelector('[data-pair]').textContent,
+        friendQR: panel.querySelector('[data-invite]').textContent,
+        defaultLimit: panel.querySelector('[name=total]').value,
+        manifest: document.querySelector('link[rel=manifest]').getAttribute('href') };
+      panel.close();
+      const registration = await navigator.serviceWorker.ready;
+      result.worker = !!registration.active;
+      return result;
+    })()`);
+    if (!sharingScreen.open || !sharingScreen.fits || sharingScreen.usage !== '오늘 0/15회 사용'
+      || sharingScreen.ownerQR !== '내 휴대폰 QR' || sharingScreen.friendQR !== '친구 초대 QR'
+      || sharingScreen.defaultLimit !== '15' || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
+      throw new Error('공유 메뉴·PWA 확인 실패: ' + JSON.stringify(sharingScreen));
+    console.log('SHARING_SCREEN_SMOKE ' + JSON.stringify(sharingScreen));
     const ui = await window.webContents.executeJavaScript(`({
       input: document.querySelector('#input')?.placeholder,
       node: typeof require,

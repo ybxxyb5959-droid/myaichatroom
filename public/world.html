@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title data-i18n="world.title">건축 월드</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='10' y='26' width='20' height='20' fill='%238b5a2b'/%3E%3Crect x='34' y='26' width='20' height='20' fill='%239a9da3'/%3E%3Crect x='22' y='6' width='20' height='20' fill='%235fa04e'/%3E%3C/svg%3E">
 <style>
 :root {
@@ -28,49 +27,70 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--sky); 
 #scene { position: fixed; inset: 0; }
 .hud { position: fixed; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-.top { top: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 10px; padding: 8px 10px 8px 14px; flex-wrap: wrap; }
+.top { top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 10px 12px 10px 16px; }
+.world-info { display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; min-width: 0; }
+.world-heading { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .top h1 { font-size: 15px; margin: 0; font-weight: 700; }
 .top .sub { color: var(--muted); font-size: 12.5px; }
-.top .sp { flex: 1; }
+.view-controls { display: flex; align-items: center; gap: 8px; padding-right: 16px; border-right: 1px solid var(--line); }
 .top a, .top button { font: inherit; font-size: 13px; color: var(--text); background: transparent; border: 1px solid var(--line);
-  border-radius: 9px; padding: 4px 10px; text-decoration: none; cursor: pointer; }
+  border-radius: 10px; min-height: 44px; padding: 8px 12px; text-decoration: none; cursor: pointer; }
+.top a:hover, .top button:hover { background: var(--line); }
+.top a:focus-visible, .top button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .top button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.top .world-close { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; padding: 0; background: var(--line); border-color: var(--muted); }
+.world-close svg { width: 24px; height: 24px; }
+.top .world-close:hover { color: #fff; background: #b83a42; border-color: #b83a42; }
 .who { display: flex; gap: 6px; flex-wrap: wrap; }
-.who button { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border-radius: 20px; }
-.who img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; }
+.who button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border-radius: 22px; }
+.who img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
 .chat { left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); max-height: 34vh; overflow: hidden; padding: 8px 12px; font-size: 13px; }
 .chat .l { margin: 3px 0; overflow-wrap: anywhere; }
 .chat .n { font-weight: 650; margin-right: 5px; }
 .chat .sys { color: var(--muted); font-size: 12px; }
 .empty { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 12px 16px; font-size: 13.5px; color: var(--muted); text-align: center; }
-.help { right: 12px; bottom: 12px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
-@media (max-width: 640px) { .help { display: none; } .chat { max-height: 26vh; } }
+.help { right: 12px; bottom: 12px; max-width: calc(100vw - 416px); padding: 10px 14px; font-size: 12px; line-height: 1.65; color: var(--text); }
+@media (max-width: 800px) {
+  .top { grid-template-columns: minmax(0, 1fr) 48px; gap: 10px; padding: 10px 12px; }
+  .world-info { grid-column: 1; grid-row: 1; gap: 8px; }
+  .top .world-close { grid-column: 2; grid-row: 1; align-self: start; }
+  .view-controls { grid-column: 1 / -1; grid-row: 2; border-right: 0; border-top: 1px solid var(--line); padding: 10px 0 0; }
+  .view-controls button { flex: 1; padding-inline: 6px; }
+  .help { display: none; }
+  .chat { max-height: 26vh; }
+}
 /* screenshot mode (server's headless camera, lib/worldshot.mjs): no HUD */
 body.shot .hud { display: none !important; }
 </style>
+<link rel="stylesheet" href="/world-player.css">
 <script type="importmap">
 { "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  "three": "/vendor/three.module.js",
+  "three/addons/": "/vendor/addons/"
 } }
 </script>
 </head>
 <body>
 <div id="scene"></div>
 <div class="hud top">
-  <h1>🧱 <span data-i18n="world.title">건축 월드</span></h1><span class="sub" id="count"></span>
-  <div class="who" id="who"></div>
-  <span class="sp"></span>
-  <button type="button" id="night" title="밤이 되면 램프가 더 잘 보여" data-i18n-title="world.nightTitle" data-i18n="world.night">🌙 밤</button>
-  <button type="button" id="rotate" title="천천히 돌려보기" data-i18n-title="world.rotateTitle" data-i18n="world.rotate">자동 회전</button>
-  <button type="button" id="home" title="처음 시점으로" data-i18n-title="world.homeTitle" data-i18n="world.home">시점 초기화</button>
-  <a href="/" data-i18n="world.back">방으로</a>
+  <div class="world-info">
+    <div class="world-heading"><h1>🧱 <span data-i18n="world.title">건축 월드</span></h1><span class="sub" id="count"></span></div>
+    <div class="who" id="who"></div>
+  </div>
+  <div class="view-controls">
+    <button type="button" id="night" title="밤이 되면 램프가 더 잘 보여" data-i18n-title="world.nightTitle" data-i18n="world.night">🌙 밤</button>
+    <button type="button" id="rotate" title="천천히 돌려보기" data-i18n-title="world.rotateTitle" data-i18n="world.rotate">자동 회전</button>
+    <button type="button" id="home" title="처음 시점으로" data-i18n-title="world.homeTitle" data-i18n="world.home">시점 초기화</button>
+  </div>
+  <a class="world-close" href="/" title="월드 나가기" aria-label="월드 나가기" data-i18n-title="world.back" data-i18n-aria="world.back">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </a>
 </div>
 <div class="hud chat" id="chat" hidden></div>
 <div class="hud help" data-i18n="world.help">드래그: 돌리기 · 휠: 확대 · 우클릭 드래그: 이동 · 멤버 누르면 따라가기</div>
 <div class="hud empty" id="empty" hidden data-i18n="world.empty">아직 아무것도 안 지었어. 방에서 멤버들한테 뭐 지어달라고 해봐.</div>
 
-<!-- Labels first, so they are translated while three.js is still loading from the CDN. -->
+<!-- Labels first, while the local three.js modules load. -->
 <script type="module">
 import { applyI18n } from '/i18n.js';
 applyI18n();
@@ -84,10 +104,11 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { t, lang, locale } from '/i18n.js';
+import { createUserAvatar, initWorldPlayer } from '/world-player.js';
 
 const MEMBERS = {
   claude: { name: 'Claude', color: '#d97a3a' }, gpt: { name: 'ChatGPT', color: '#2f7cf6' },
-  grok: { name: 'Grok', color: '#b8912a' }, gemini: { name: 'Gemini', color: '#5b6cf0' },
+  gemini: { name: 'Gemini', color: '#5b6cf0' },
 };
 let USER_NAME = ''; // the owner's name from /api/state
 const NAME_OF = (id) => MEMBERS[id]?.name || (id === 'user' ? USER_NAME || t('user.default') : id === 'dev' ? t('dev.name') : id);
@@ -261,6 +282,8 @@ function applyNight() {
 
 let SIZE = { x: 48, y: 32, z: 48 };
 let PALETTE = {};
+let OWNERS = {};
+let playerUI = null;
 const blocks = new Map(); // "x,y,z" -> name
 const meshes = new Map(); // name -> InstancedMesh
 const cube = new THREE.BoxGeometry(1, 1, 1);
@@ -487,6 +510,7 @@ function rebuild(values) {
     if (!keys.length) { meshes.delete(rk); continue; }
     const p = parseBlock(rk);
     const mesh = new THREE.InstancedMesh(geometryOf(p.shape, p.facing), material(p.type), keys.length);
+    mesh.userData.cells = keys;
     keys.forEach((k, i) => {
       const [x, y, z] = k.split(',').map(Number);
       m4.makeTranslation(x + 0.5, y - 0.5, z + 0.5);
@@ -606,7 +630,15 @@ function textSprite(text, { color = '#1b1f2a', bg = 'rgba(255,255,255,.94)', bor
 }
 
 function ensureAvatar(id) {
-  if (avatars[id] || !MEMBERS[id]) return avatars[id];
+  if (avatars[id]) return avatars[id];
+  if (id === 'user') {
+    const a = createUserAvatar();
+    const tag = textSprite(NAME_OF('user'), { color: '#fff', bg: '#7451d8', size: 26 });
+    tag.position.y = 2.65; a.group.add(tag);
+    scene.add(a.group); avatars[id] = a;
+    return a;
+  }
+  if (!MEMBERS[id]) return;
   const group = new THREE.Group();
   const face = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffff }));
   face.scale.set(1.8, 1.8, 1);
@@ -617,7 +649,7 @@ function ensureAvatar(id) {
     img.onload = () => { face.material.map = circleTexture(img, MEMBERS[id].color); face.material.needsUpdate = true; done(); };
     img.onerror = done;
   });
-  img.src = `/avatars/${id}-128.webp`;
+  img.src = `/avatars/${id}-pixel-128.png`;
   const tag = textSprite(MEMBERS[id].name, { color: '#fff', bg: MEMBERS[id].color, border: 'rgba(0,0,0,.2)', size: 26 });
   tag.position.y = 2.35;
   group.add(tag);
@@ -631,9 +663,11 @@ function ensureAvatar(id) {
 }
 
 function setAvatars(map) {
+  if (avatars.user) avatars.user.group.visible = !!map?.user;
   for (const [id, p] of Object.entries(map || {})) {
     const a = ensureAvatar(id);
     if (!a) continue;
+    a.group.visible = true;
     a.target.set(p.x + 0.5, p.y - 1, p.z + 0.5); // feet on top of the column
     if (!a.placed) { a.group.position.copy(a.target); a.placed = true; }
   }
@@ -657,7 +691,7 @@ function renderWho() {
   for (const [id, m] of Object.entries(MEMBERS)) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.innerHTML = `<img src="/avatars/${id}-128.webp" alt=""><span style="color:${m.color};font-weight:650">${m.name}</span>`;
+    b.innerHTML = `<img src="/avatars/${id}-pixel-128.png" alt=""><span style="color:${m.color};font-weight:650">${m.name}</span>`;
     b.onclick = () => { follow = follow === id ? null : id; b.classList.toggle('on', follow === id); renderWhoState(); };
     b.dataset.id = id;
     box.append(b);
@@ -668,12 +702,14 @@ function renderWhoState() { for (const b of $('#who').children) b.classList.togg
 const chatLines = [];
 function addChat(m) {
   if (!m || m.kind === 'react') return;
+  if (m.id && chatLines.some((line) => line.id === m.id)) return;
   let text = m.text || '';
   if (!text && m.attach) text = t(m.attach.sticker ? 'world.sticker' : 'world.picture');
   if (!text) return;
-  chatLines.push({ from: m.from, text, sys: m.from === 'system' });
-  while (chatLines.length > 7) chatLines.shift();
+  chatLines.push({ id: m.id, from: m.from, text, name: m.displayName, sys: m.from === 'system' });
+  while (chatLines.length > 80) chatLines.shift();
   const box = $('#chat');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   box.hidden = false;
   box.innerHTML = '';
   for (const l of chatLines) {
@@ -683,12 +719,13 @@ function addChat(m) {
       const n = document.createElement('span');
       n.className = 'n';
       n.style.color = MEMBERS[l.from]?.color || 'var(--accent)';
-      n.textContent = NAME_OF(l.from);
+      n.textContent = l.name || NAME_OF(l.from);
       d.append(n);
     }
-    d.append(document.createTextNode(l.text.length > 160 ? l.text.slice(0, 160) + '…' : l.text));
+    d.append(document.createTextNode(l.text));
     box.append(d);
   }
+  if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
 $('#rotate').onclick = (e) => { controls.autoRotate = !controls.autoRotate; e.currentTarget.classList.toggle('on', controls.autoRotate); };
@@ -719,6 +756,7 @@ $('#home').onclick = () => { homeView(); renderWhoState(); };
 async function load() {
   const w = await fetch('/api/world').then((r) => r.json());
   SIZE = w.size; PALETTE = w.palette; CUSTOM = w.custom || {};
+  OWNERS = w.owners || {};
   texCache.clear();
   blocks.clear();
   for (const [x, y, z, type] of w.blocks) blocks.set(`${x},${y},${z}`, type);
@@ -726,24 +764,32 @@ async function load() {
   rebuild(new Set([...blocks.values(), ...meshes.keys(), 'lamp']));
   SIGNS = w.signs || {};
   renderSigns();
-  setAvatars(w.avatars);
   const st = await fetch('/api/state').then((r) => r.json()).catch(() => null);
   USER_NAME = st?.room?.userName || USER_NAME;
-  for (const m of (st?.messages || []).slice(-6)) addChat(m);
+  setAvatars(w.avatars);
+  for (const m of (st?.messages || []).slice(-80)) addChat(m);
+  playerUI?.update();
+}
+
+function applyWorldPatch({ changes = [], owners = {}, signs }) {
+  const types = new Set();
+  for (const [x, y, z, type] of changes) {
+    const k = `${x},${y},${z}`, old = blocks.get(k);
+    if (old) types.add(old);
+    if (type) { blocks.set(k, type); types.add(type); } else blocks.delete(k);
+  }
+  for (const [k, owner] of Object.entries(owners)) {
+    if (owner) OWNERS[k] = owner; else delete OWNERS[k];
+  }
+  rebuild(types);
+  if (signs) { SIGNS = signs; renderSigns(); }
+  playerUI?.update();
 }
 
 function connect() {
   const es = new EventSource('/events');
   es.addEventListener('world', (e) => {
-    const { changes } = JSON.parse(e.data);
-    const types = new Set();
-    for (const [x, y, z, type] of changes) {
-      const k = `${x},${y},${z}`;
-      const old = blocks.get(k);
-      if (old) types.add(old);
-      if (type) { blocks.set(k, type); types.add(type); } else blocks.delete(k);
-    }
-    rebuild(types);
+    applyWorldPatch(JSON.parse(e.data));
   });
   es.addEventListener('avatars', (e) => setAvatars(JSON.parse(e.data)));
   es.addEventListener('signs', (e) => { SIGNS = JSON.parse(e.data) || {}; renderSigns(); });
@@ -751,11 +797,12 @@ function connect() {
     CUSTOM = JSON.parse(e.data) || {};
     for (const n of Object.keys(CUSTOM)) texCache.delete(n); // a redefined block gets its new picture
     rebuild(new Set([...blocks.values()].filter((v) => CUSTOM[parseBlock(v).type])));
+    playerUI?.update();
   });
-  es.addEventListener('msg', (e) => {
+  es.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
     addChat(m);
-    if (MEMBERS[m.from] && m.text) say(m.from, m.text);
+    if ((MEMBERS[m.from] || m.from === 'user') && m.text) say(m.from, m.text);
   });
   let hadError = false;
   es.onerror = () => { hadError = true; };
@@ -776,7 +823,14 @@ resize();
 
 function tick() {
   const now = performance.now();
+  playerUI?.tick(now);
   for (const a of Object.values(avatars)) {
+    if (a.animate) {
+      const dx = a.target.x - a.group.position.x, dz = a.target.z - a.group.position.z;
+      const moving = Math.hypot(dx, dz) > .03;
+      if (moving) a.body.rotation.y = Math.atan2(dx, dz);
+      a.animate(now, moving);
+    }
     a.group.position.lerp(a.target, 0.08);
     if (a.bubble && now > a.bubbleUntil) {
       const left = 1 - (now - a.bubbleUntil) / 800;
@@ -786,7 +840,9 @@ function tick() {
   }
   if (follow && avatars[follow]) {
     const p = avatars[follow].group.position;
-    controls.target.lerp(new THREE.Vector3(p.x, p.y + 1, p.z), 0.08);
+    const next = new THREE.Vector3(p.x, p.y + 1, p.z);
+    if (follow === 'user') camera.position.add(next.clone().sub(controls.target).multiplyScalar(.12));
+    controls.target.lerp(next, follow === 'user' ? .12 : .08);
   }
   if (!freeCam) controls.update(); // orbit controls would turn a free camera back to its target
   LAMP.uTime.value = now / 1000;
@@ -799,6 +855,26 @@ renderWho();
 applyNight();
 homeView();
 buildGround();
+if (!SHOT) playerUI = initWorldPlayer({
+  scene, camera, controls, canvas: renderer.domElement, addChat, nameOf: NAME_OF,
+  getWorld: () => ({ size: SIZE, palette: PALETTE, custom: CUSTOM, blocks, owners: OWNERS, meshes, ground }),
+  setUser: (p) => {
+    if (!p) { if (avatars.user) avatars.user.group.visible = false; return; }
+    const a = ensureAvatar('user'); a.group.visible = true;
+    a.target.set(p.x + .5, p.y - 1, p.z + .5);
+    if (!a.placed) { a.group.position.copy(a.target); a.placed = true; }
+  },
+  followUser: (on) => {
+    if (on) {
+      follow = 'user'; controls.autoRotate = false; $('#rotate').classList.remove('on');
+      const p = avatars.user.target;
+      controls.target.set(p.x, p.y + 1, p.z); camera.position.set(p.x + 7, p.y + 8, p.z + 10);
+      controls.update();
+    } else { homeView(); }
+    renderWhoState();
+  },
+  applyPatch: applyWorldPatch,
+});
 load()
   .then(() => { if (SHOT) { shotView(); markShotReady(); } })
   .catch(() => { $('#empty').hidden = false; $('#empty').textContent = t('world.loadFailed'); });

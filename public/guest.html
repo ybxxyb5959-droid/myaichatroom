@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#141820"><title>AI 단톡방</title><link rel="stylesheet" href="/share.css">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png"></head>
+<body class="phone-page"><header><h1 id="roomTitle">AI 단톡방</h1><p id="guestStatus"></p><a href="/logout">로그아웃</a></header>
+<main id="guestMessages" aria-live="polite"></main>
+<form id="guestForm" class="phone-composer"><label>메시지<textarea id="guestText" maxlength="4000" rows="2" required placeholder="친구들과 대화해 보세요."></textarea></label>
+<div><label><input type="checkbox" id="askAI"> AI에게도 답변 요청 (1회 사용)</label> <select id="guestAI" aria-label="답변할 AI"></select></div>
+<button id="guestSend">보내기</button><p id="guestError" class="share-error" role="alert"></p></form>
+<script type="module" src="/guest.js"></script><script type="module" src="/pwa.js"></script></body></html>

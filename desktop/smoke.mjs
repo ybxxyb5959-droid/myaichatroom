@@ -31,7 +31,7 @@ try {
   const receipt = JSON.parse(line.slice('DESKTOP_SMOKE '.length));
   assert.equal(receipt.ok, true);
   assert.equal(receipt.packaged, !!packaged);
-  assert.equal(receipt.input, '채팅을 입력하세요');
+  assert.equal(receipt.input, '채팅을 입력하세요.');
   console.log(JSON.stringify(receipt));
   if (result.stderr.trim()) console.error(result.stderr.trim());
 } finally {

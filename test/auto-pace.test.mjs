@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LEVELS } from '../lib/auto.mjs';
+import { SPEEDS } from '../lib/original-room.mjs';
 
-test('automatic conversation intervals match the requested ranges at every activity level', () => {
-  const minute = 60000;
-  assert.deepEqual(LEVELS.low.callMs, [15 * minute, 25 * minute]);
-  assert.deepEqual(LEVELS.medium.callMs, [5 * minute, 10 * minute]);
-  assert.deepEqual(LEVELS.high.callMs, [2 * minute, 5 * minute]);
-  assert.deepEqual([LEVELS.low.daily, LEVELS.medium.daily, LEVELS.high.daily], [10, 100, 200]);
+test('conversation uses the original normal pace, independently of boost mode', () => {
+  assert.deepEqual(SPEEDS.normal.read, [4, 12]);
+  assert.deepEqual(SPEEDS.normal.spark, [150, 330]);
+  assert.equal(SPEEDS.normal.cooldown, 8);
+  assert.equal(SPEEDS.normal.perMin, 10);
 });
