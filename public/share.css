@@ -1,0 +1,55 @@
+.share-dialog { width: min(560px, calc(100vw - 24px)); max-height: 90dvh; overflow: auto; border: 1px solid #8994aa; border-radius: 18px; padding: 22px; background: var(--panel, #fff); color: var(--text, #172033); font: 14px/1.6 system-ui, sans-serif; }
+.share-dialog::backdrop { background: #0009; }
+.share-dialog header, .share-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.share-dialog h2, .share-dialog h3 { margin: 0 0 10px; }
+.share-dialog [hidden] { display: none !important; }
+.share-dialog a { color: var(--accent, #5166db); text-underline-offset: 3px; }
+.share-dialog ol, .share-dialog ul { padding-left: 22px; }
+.share-dialog li + li { margin-top: 8px; }
+.share-setup { margin: 18px 0; padding: 16px; border-radius: 12px; background: var(--panel-2, #8994aa12); }
+.share-setup p { margin: 8px 0; }
+.share-tabs { position: relative; display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border: 1px solid #8994aa55; border-radius: 12px; background: var(--panel-2, #8994aa12); }
+.share-tabs::before { content: ''; position: absolute; inset: 4px auto 4px 4px; width: calc(50% - 4px); background: var(--panel, #fff); border-radius: 9px; box-shadow: 0 2px 8px #0002; transition: transform .24s ease; }
+.share-tabs.is-guest::before { transform: translateX(100%); }
+.share-dialog .share-tabs button { position: relative; background: transparent; border: 0; font-weight: 650; color: var(--muted, #687387); }
+.share-tabs button[aria-selected=true] { color: var(--accent, #5166db); }
+.share-dialog button:focus-visible, .share-dialog a:focus-visible { outline: 2px solid var(--accent, #5166db); outline-offset: 3px; }
+.share-panel { padding-top: 20px; animation: share-slide .24s ease both; }
+#shareGuestPanel { --slide-from: 10px; }
+#shareOwnerPanel { --slide-from: -10px; }
+.share-home { margin: 20px 0; padding: 14px; border: 1px solid #8994aa44; border-radius: 12px; }
+.share-home p { margin: 8px 0; }
+.share-manage { margin-top: 20px; }
+.share-manage summary { cursor: pointer; margin-bottom: 16px; }
+.share-footer { border-top: 1px solid #8994aa44; margin-top: 20px; padding-top: 14px; }
+@keyframes share-slide { from { opacity: 0; transform: translateX(var(--slide-from)); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .share-tabs::before { transition: none; } .share-panel { animation: none; } }
+@media (max-width: 480px) { .share-dialog { padding: 16px; box-sizing: border-box; } .share-setup { padding: 12px; } }
+.share-dialog button, .phone-page button { cursor: pointer; border: 1px solid #8994aa; border-radius: 9px; background: var(--panel, #fff); color: inherit; padding: 9px 12px; font: inherit; }
+.share-dialog button:disabled, .phone-page button:disabled { opacity: .5; cursor: wait; }
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.share-dialog input, .phone-page input, .phone-page textarea, .phone-page select { box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #8994aa; border-radius: 8px; font: inherit; background: var(--panel, #fff); color: inherit; }
+.share-dialog input[type=number] { width: 80px; }
+.share-result { border: 1px solid #8994aa; border-radius: 12px; padding: 14px; overflow-wrap: anywhere; margin: 14px 0; }
+.share-result img { display: block; width: min(280px, 100%); height: auto; margin: auto; }
+.share-note { font-size: 13px; opacity: .85; }
+.share-error { color: #be2929; white-space: pre-wrap; overflow-wrap: anywhere; }
+.share-list { display: grid; gap: 12px; padding: 0; list-style: none; }
+.share-list li { border-bottom: 1px solid #8994aa66; padding-bottom: 10px; overflow-wrap: anywhere; }
+.phone-page { box-sizing: border-box; margin: 0 auto; padding: 20px 16px; max-width: 760px; min-height: 100dvh; font: 16px/1.6 system-ui, sans-serif; background: #f7f8fb; color: #172033; }
+.phone-page h1 { font-size: 23px; }
+.phone-card { border: 1px solid #8994aa; border-radius: 12px; background: #fff; padding: 20px; margin: 20px 0; }
+.phone-page form { display: grid; gap: 12px; }
+.phone-message { margin: 10px 0; padding: 10px 14px; border-radius: 12px; background: #e6eaf4; overflow-wrap: anywhere; }
+.phone-message p { white-space: pre-wrap; margin: 4px 0; }
+.phone-message small { opacity: .8; }
+.phone-page input[type=checkbox] { width: auto; }
+.phone-composer { position: sticky; bottom: 0; background: #f7f8fb; padding: 12px 0; border-top: 1px solid #8994aa; }
+.pwa-install { display: block; margin: 10px 0; padding: 8px 12px; }
+.pwa-install[hidden] { display: none; }
+@media (prefers-color-scheme: dark) {
+  .phone-page { background: #141820; color: #eee; --panel: #202938; }
+  .phone-card, .phone-composer { background: #141820; }
+  .phone-message { background: #263146; }
+  .share-error { color: #ff8080; }
+}

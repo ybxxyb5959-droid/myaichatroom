@@ -1,0 +1,46 @@
+.play-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.top .enter-world { background: var(--accent); color: white; font-weight: 700; }
+.world-chat { left: 12px; top: auto; bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--keyboard-inset, 0px)); width: min(330px, calc(100vw - 24px)); display: flex; flex-direction: column; max-height: min(55dvh, 500px, calc(var(--visible-height, 100dvh) - var(--hud-top, 110px) - 24px)); overflow: hidden; transform: translateY(0); opacity: 1; transition: transform .32s cubic-bezier(.22, 1, .36, 1), opacity .25s; }
+.world-chat.collapsed { transform: translateY(calc(100% + max(12px, env(safe-area-inset-bottom)) + 24px)); opacity: 0; pointer-events: none; }
+.world-chat header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.world-chat header strong { font-size: 14px; }
+.world-chat .chat { position: static; width: auto; max-height: none; min-height: 60px; overflow-y: auto; overscroll-behavior: contain; flex: 1; padding: 10px 12px; background: none; border: 0; box-shadow: none; backdrop-filter: none; }
+.world-chat .chat .l { margin: 0 0 9px; }
+.world-chat .chat .n { display: block; font-size: 12px; }
+.world-chat form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); }
+.world-chat input { min-width: 0; flex: 1; height: 44px; padding: 8px 10px; font: inherit; font-size: 16px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.world-chat button, .player-tools button, .chat-toggle, .joystick { font: inherit; color: var(--text); border: 1px solid var(--line); border-radius: 10px; min-height: 44px; padding: 8px 12px; background: var(--panel); cursor: pointer; }
+.world-chat button:focus-visible, .player-tools :focus-visible, .chat-toggle:focus-visible, .joystick:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.world-chat form button { background: var(--accent); color: white; }
+.world-chat .chat-state { padding: 0 12px 8px; color: var(--muted); font-size: 12px; }
+.world-chat .chat-error { color: #df6666; }
+.player-tools[hidden], .joystick[hidden], .chat-toggle[hidden] { display: none; }
+.chat-toggle { position: fixed; bottom: max(20px, env(safe-area-inset-bottom)); left: 12px; z-index: 3; }
+.player-tools { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(52px, env(safe-area-inset-bottom)); width: 160px; }
+.player-tools .edit-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.player-tools .break-block { color: white; background: #b83a42; }
+.player-tools .place-block { color: white; background: var(--accent); }
+.player-tools .edit-buttons button[aria-pressed="false"] { background: var(--panel); color: var(--text); }
+.player-tools .edit-buttons button[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: -3px; font-weight: 700; }
+.player-tools button:disabled { opacity: .45; cursor: default; }
+.player-status { position: fixed; left: 50%; bottom: max(52px, env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: min(440px, calc(100vw - 28px)); padding: 9px 14px; font-size: 13px; pointer-events: none; z-index: 5; }
+.player-status:empty { display: none; }
+.joystick { display: none; position: fixed; right: max(20px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); width: 112px; height: 112px; border-radius: 50%; touch-action: none; user-select: none; -webkit-user-select: none; background: var(--panel); box-shadow: var(--shadow); }
+.joystick::before { content: '이동'; position: absolute; top: 6px; left: 0; right: 0; font-size: 11px; color: var(--muted); }
+.joystick span { display: block; position: absolute; left: 33px; top: 33px; width: 44px; height: 44px; border-radius: 50%; background: var(--accent); border: 2px solid white; pointer-events: none; }
+body.playing .help { max-width: calc(100vw - 380px); }
+body.chat-typing .player-tools, body.chat-typing .joystick { display: none; }
+@media (pointer: coarse), (max-width: 800px) {
+  .joystick:not([hidden]) { display: block; }
+  .world-chat { z-index: 4; }
+  .player-tools { bottom: calc(max(24px, env(safe-area-inset-bottom)) + 126px); }
+  .player-tools button { padding-inline: 6px; font-size: 13px; }
+  .player-status { top: calc(var(--hud-top, 180px) + 8px); bottom: auto; width: max-content; text-align: center; }
+  body.playing .who { display: none; }
+}
+@media (max-height: 500px) and (pointer: coarse) {
+  .top .world-info .who { display: none; }
+  .player-tools { right: 148px; bottom: 8px; }
+  .player-status { max-width: calc(100vw - 40px); }
+}
+@media (prefers-reduced-motion: reduce) { .world-chat { transition: none; } }
