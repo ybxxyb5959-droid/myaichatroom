@@ -17,6 +17,7 @@ import { ActivityLog, topicOf } from './lib/activity.mjs';
 import { pickPrimary } from './lib/callpick.mjs';
 import { parseCall, parseNickname } from './public/recipients.mjs';
 import { WAVE, INTERJECT_MIN_PCT } from './lib/auto.mjs';
+import { mentionedTargets } from './lib/discussion.mjs';
 import { heavyReason } from './lib/router.mjs';
 import { LIMITS, LEVELS, DEFAULT_LEVEL, AUTO_FEATURES, featuresOf, dayKey, freshUsage, usageFor, redact, pickScript, decide, AUTO_BRIEF, topicCount, autoHistory, autoPrompt, tidy, cleanMemo, cleanBio, splitMemo, memoBlock, cleanTitle, userLine, peerContext, greetPrompt, memberGreetPrompt, absentText } from './lib/auto.mjs';
 import { ACTIVITY_LIMITS, ACTIVITY_PROMPT, parseActivity, postcard } from './lib/activities.mjs';
@@ -777,7 +778,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         // Later turns of a Talk round answer the line before them, so they are linked as replies.
         const said = post({ from: id, text, ...artifact, auto: plan.kind === 'chat' ? 'call' : 'greet',
           ...(plan.kind === 'member-back' ? { returnTo: plan.memberId } : {}), model: settings.model, effort: settings.effort || '',
-          ...(plan.kind === 'chat' ? replyFields(job.posted.at(-1)) : {}) });
+          // Not every line is a reply to the one before it: about half are, the rest just join the conversation.
+          ...(plan.kind === 'chat' && random() < 0.5 ? replyFields(job.posted.at(-1)) : {}) });
         job.posted.push(said);
         if (artifact) record({ kind: 'creation', actors: [id], ref: { messageId: said.id, path: artifact.attach.path },
           text: `${nameOf(id)}가 ${parsed.activity.kind === 'photo' ? '가상 사진' : '그림'} 공유: ${topicOf(parsed.activity.title, 20)}` });
@@ -809,10 +811,10 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   }
   // ---------- the house: members build it slowly, one short turn at a time, only while Talk is on ----------
   const MIN = 60000;
-  // 활발하게 has no wait between house turns (the next one starts at the next tick, about 30 s); its real brake is
-  // the level's shared daily call cap (LEVELS.high.daily), which every house turn counts against.
-  const HOUSE_PACE = { low: { gap: [30 * MIN, 60 * MIN], daily: 3 }, medium: { gap: [8 * MIN, 15 * MIN], daily: 12 }, high: { gap: [0, 0], daily: LEVELS.high.daily } };
+  // 활발하게: a house turn every 30 seconds, up to 100 a day (each also counts against the level's shared daily call cap).
+  const HOUSE_PACE = { low: { gap: [30 * MIN, 60 * MIN], daily: 3 }, medium: { gap: [8 * MIN, 15 * MIN], daily: 12 }, high: { gap: [30 * 1000, 30 * 1000], daily: 100 } };
   const house = new House(path.join(root, 'data', 'house.json'), { ids: IDS, names: Object.fromEntries(IDS.map((id) => [id, nameOf(id)])) });
+  let houseNext = null; // set when a builder @mentions a teammate in its house line
   let houseAt = clock() + MIN; // after a restart the unfinished work resumes soon (if Talk is on)
   function houseTurn() {
     const now = clock();
@@ -821,7 +823,9 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const usage = usageFor(room.auto, now);
     const order = IDS.filter((id) => eligibleAuto().includes(id));
     if (!order.length || usage.stopped || usage.calls >= LEVELS[room.auto.level].daily || (usage.house || 0) >= pace.daily) return Promise.resolve();
-    const id = order[(order.indexOf(house.s.lastActor) + 1) % order.length];
+    // The teammate the last builder called with @ goes next; otherwise they take turns.
+    const id = houseNext && houseNext !== house.s.lastActor && order.includes(houseNext) ? houseNext : order[(order.indexOf(house.s.lastActor) + 1) % order.length];
+    houseNext = null;
     const job = { controller: new AbortController(), actor: id };
     houseJob = job; publish();
     usage.house = (usage.house || 0) + 1; usage.calls++; persist(); // counted before the call, so a stopped call still counts
@@ -830,7 +834,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const before = house.s.phase === 'life' ? snapshot(house) : null;
     job.done = (async () => { try {
       const settings = autoSettings(id);
-      const result = await adapter.chat(id, HOUSE_BRIEF, house.prompt(id, { resumedAfterMs: house.s.lastTurnAt ? now - house.s.lastTurnAt : 0 }),
+      const result = await adapter.chat(id, HOUSE_BRIEF, house.prompt(id, { resumedAfterMs: house.s.lastTurnAt ? now - house.s.lastTurnAt : 0, resting: IDS.filter((other) => other !== id && !order.includes(other)) }),
         { settings, independent: true, webSearch: false, signal: job.controller.signal, timeoutMs: LIMITS.callTimeoutMs * 2 });
       if (job.controller.signal.aborted || !room.auto.on || !room.auto.features.house || autoSleeping()) return;
       const reply = result.ok ? parseHouseReply(result.text) : null;
@@ -846,6 +850,21 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (before && summary) { markUndo(house, before, id, `${nameOf(id)}: ${summary}`, clock()); house.save(); }
       broadcast('house', {});
       if (turn.notice) post({ from: 'system', kind: 'house-build', by: id, text: turn.notice });
+      // What the builder says is shared in the chat too (no extra AI call); an @mention picks who builds next.
+      // Only now and then: a line that hands the work to a teammate is usually shared, a plain one rarely. A shared line
+      // is sometimes a reply to the teammate's last shared line and sometimes not.
+      if (turn.say) {
+        // Nobody is called who is resting (limit, off, sign-in): that @ would go unanswered, so it is shown as a plain name.
+        const awake = eligibleAuto();
+        turn.say = turn.say.replace(/@([A-Za-z가-힣]+)/g, (m, word) => (mentionedTargets(m).some((target) => !awake.includes(target)) ? word : m));
+        const called = mentionedTargets(turn.say).find((target) => target !== id && awake.includes(target)) || null;
+        houseNext = called;
+        if (random() < (called ? 0.8 : 0.3)) {
+          const last = store.messages.findLast((m) => m.kind === 'house-say');
+          const reply = last && last.from !== id && clock() - last.ts < 10 * 60000 && random() < 0.4 ? last : null;
+          post({ from: id, kind: 'house-say', auto: 'house', text: turn.say, ...replyFields(reply) });
+        }
+      }
       if (turn.done.length || turn.say) record({ kind: 'house', actors: [id], ref: { houseTurn: house.s.turns },
         text: turn.done.length ? `${nameOf(id)} 집 작업: ${summary || '이동'}` : `${nameOf(id)}가 집에서 한마디` });
       if (house.s.phase === 'build' && isComplete(house)) startLife();

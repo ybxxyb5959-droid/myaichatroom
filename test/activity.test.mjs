@@ -7,6 +7,7 @@ import { ActivityLog, ACTIVITY_MAX } from '../lib/activity.mjs';
 import { pickPrimary } from '../lib/callpick.mjs';
 import { AUTO_BRIEF, LEVELS } from '../lib/auto.mjs';
 import { HOUSE_BRIEF } from '../lib/house.mjs';
+import { IDS as ORDER } from '../lib/discussion.mjs';
 import { Workbench, WORK_IDS } from '../lib/workbench.mjs';
 import { createAssistantServer, loadConfig } from '../server.mjs';
 
@@ -120,6 +121,54 @@ test('who answers: names and nicknames, room-wide phrases, one smart pick, and a
   assert.equal((await ids('클로드를 클롱이라고 부를게')).length, 1); // saying it is not itself a call
   assert.deepEqual(await ids('클롱아 안녕'), ['claude']);
   assert.deepEqual((await s.get('/api/state')).room.aliases.claude, ['클롱']);
+});
+
+test('a builder that @mentions a teammate in its house line hands the next turn to them, in the chat too', async (t) => {
+  const clock = { t: new Date(2026, 9, 7, 10).getTime() };
+  const s = await start(t, { clock, autoTickMs: 25 });
+  await s.post('/api/check/login', {});
+  const original = s.adapter.chat;
+  s.adapter.chat = async (id, brief, prompt, opts) => {
+    const base = await original(id, brief, prompt, opts);
+    if (!brief.startsWith(HOUSE_BRIEF)) return base;
+    // The first builder calls the teammate who would NOT be next in the usual turn order.
+    const first = s.adapter.calls.filter((c) => c.house).length === 1;
+    if (first) { picked.builder = id; picked.target = ORDER[(ORDER.indexOf(id) + 2) % ORDER.length]; }
+    return { ok: true, text: JSON.stringify({ say: first ? `@${{ claude: 'Claude', gpt: 'GPT', gemini: 'Gemini' }[picked.target]} 벽을 이어서 부탁해` : '좋아', actions: [] }) };
+  };
+  const picked = {};
+  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, notes: false, games: false } } });
+  clock.t += 2 * 60000;
+  for (let i = 0; i < 40 && !s.adapter.calls.some((c) => c.house); i++) await new Promise((r) => setTimeout(r, 25));
+  clock.t += 2 * 60 * 60000;
+  for (let i = 0; i < 40 && s.adapter.calls.filter((c) => c.house).length < 2; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(s.adapter.calls.filter((c) => c.house).map((c) => c.id).slice(0, 2), [picked.builder, picked.target], 'the @mentioned teammate builds next, not the next in turn');
+  const lines = s.app.store.messages.filter((m) => m.kind === 'house-say');
+  assert.match(lines[0].text, /^@\w+ 벽을 이어서 부탁해$/); assert.equal(lines[0].from, picked.builder); assert.equal(lines[0].auto, 'house');
+});
+
+test('nobody is @called in the house chat who is resting; the prompt names who is resting', async (t) => {
+  const clock = { t: new Date(2026, 9, 7, 10).getTime() };
+  const s = await start(t, { clock, autoTickMs: 25, usage: fakeUsage({ claude: 95, gpt: 10, gemini: 10 }) }); // Claude has 5% left
+  await s.post('/api/check/login', {});
+  const original = s.adapter.chat;
+  s.adapter.chat = async (id, brief, prompt, opts) => {
+    const base = await original(id, brief, prompt, opts);
+    if (!brief.startsWith(HOUSE_BRIEF)) return base;
+    return { ok: true, text: JSON.stringify({ say: '@Claude 러그 깔아줘', actions: [] }) };
+  };
+  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, notes: false, games: false } } });
+  clock.t += 2 * 60000;
+  for (let i = 0; i < 40 && !s.adapter.calls.some((c) => c.house); i++) await new Promise((r) => setTimeout(r, 25));
+  clock.t += 2 * 60 * 60000;
+  for (let i = 0; i < 40 && s.adapter.calls.filter((c) => c.house).length < 2; i++) await new Promise((r) => setTimeout(r, 25));
+  await new Promise((r) => setTimeout(r, 50));
+  const turns = s.adapter.calls.filter((c) => c.house);
+  assert.ok(turns.length >= 2 && turns.every((c) => c.id !== 'claude'), 'a resting AI is not asked to build');
+  assert.match(turns[0].prompt, /지금 쉬는 동료\(@로 부르지 않는다\): .*Claude/);
+  const lines = s.app.store.messages.filter((m) => m.kind === 'house-say');
+  assert.ok(lines.every((m) => !m.text.includes('@Claude')), 'the @ is dropped, the name stays as plain text');
 });
 
 // A casual answer: every normal answer is tagged 잡담; the chime-in turn (prompt has "[끼어들기 턴]") answers by `chime`.
@@ -280,8 +329,9 @@ test('chat answers, Talk rounds and member activity are recorded without extra A
   const talk = s.app.store.messages.filter((m) => m.auto === 'call');
   assert.equal(talk.length, LEVELS.low.turns);
   assert.equal(talk[0].replyTo, undefined);
-  assert.deepEqual(talk.slice(1).map((m) => m.replyTo), talk.slice(0, -1).map((m) => m.id));
-  assert.equal(talk[1].replyPreview.from, talk[0].from);
+  // Only about half of the later lines are replies (the dice here is 0.5, so none); a reply always points at the line before it.
+  assert.ok(talk.every((m, i) => m.replyTo === undefined || m.replyTo === talk[i - 1].id));
+  assert.equal(talk.filter((m) => m.replyTo !== undefined).length, 0);
   assert.ok(states.every((text) => text === '💬 Talk에서 말하는 중'), states.join(' / '));
   const view = s.app.view();
   assert.equal(view.room.auto.usage.calls, LEVELS.low.turns);
@@ -377,6 +427,8 @@ test('feature switches are saved, restored and respected; the house turn is reco
   assert.equal(notices[0].from, 'system');
   assert.equal(notices[0].by, s.adapter.calls.find((c) => c.house).id);
   assert.equal(notices[0].text, '바닥 놓음 4칸 (2,2–3,3)');
+  // A plain line is only shared now and then (30%; the dice here is 0.5), so it stays in the house log.
+  assert.equal(s.app.store.messages.filter((m) => m.kind === 'house-say').length, 0);
   clock.t += 60 * 60000;
   for (let i = 0; i < 40 && s.adapter.calls.filter((c) => c.house).length < 2; i++) await new Promise((r) => setTimeout(r, 25));
   await new Promise((r) => setTimeout(r, 50));
