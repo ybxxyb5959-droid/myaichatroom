@@ -19,17 +19,15 @@ import { parseCall, parseNickname } from './public/recipients.mjs';
 import { WAVE, INTERJECT_MIN_PCT } from './lib/auto.mjs';
 import { mentionedTargets } from './lib/discussion.mjs';
 import { heavyReason } from './lib/router.mjs';
-import { LIMITS, LEVELS, DEFAULT_LEVEL, AUTO_FEATURES, featuresOf, dayKey, freshUsage, usageFor, redact, pickScript, decide, AUTO_BRIEF, topicCount, autoHistory, autoPrompt, tidy, cleanMemo, cleanBio, splitMemo, memoBlock, cleanTitle, userLine, peerContext, greetPrompt, memberGreetPrompt, absentText } from './lib/auto.mjs';
+import { LIMITS, LEVELS, DEFAULT_LEVEL, dayKey, freshUsage, usageFor, redact, pickScript, decide, AUTO_BRIEF, topicCount, autoHistory, autoPrompt, tidy, cleanMemo, cleanBio, splitMemo, memoBlock, cleanTitle, userLine, peerContext, greetPrompt, memberGreetPrompt, absentText } from './lib/auto.mjs';
 import { ACTIVITY_LIMITS, ACTIVITY_PROMPT, parseActivity, postcard } from './lib/activities.mjs';
 import { GAME_LIMITS, GAME_CSP, GAME_BRIEF, gamePrompt, parseDraft, applyGamePatches, gameDocument } from './lib/game.mjs';
 import { checkGame } from './lib/gamecheck.mjs';
 import { EMOJIS, BIO_INTERVAL } from './lib/social.mjs';
 import { latestCall, quotaOf } from './public/status.mjs';
-import { Workbench } from './lib/workbench.mjs';
 import { House, HOUSE_BRIEF, parseHouseReply } from './lib/house.mjs';
-import { isComplete, enterLife, lifeBeat, lifeEvent, drift, snapshot, markUndo, undo as undoHouse, decide as decideHouse, setMode as setHouseMode, noteEvent, relationHint, eventChatter, LIFE_PACE, EVENT_GAP } from './lib/life.mjs';
+import { isComplete, enterLife, lifeBeat, lifeEvent, drift, snapshot, markUndo, undo as undoHouse, decide as decideHouse, setMode as setHouseMode, relationHint, eventChatter, LIFE_PACE, EVENT_GAP } from './lib/life.mjs';
 import { chooseShare, captionFor, renderShare, SHARE_GAP } from './lib/lifeshare.mjs';
-import { startGame, stepGame, joinGame, answerGame, userPrompt, GAME_GAP, STEP_MS } from './lib/play.mjs';
 import { todayDigest, buildNote, NOTE_GAP, TODAY_QUESTION } from './lib/digest.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -186,22 +184,15 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         : [0, 5, 15, 30, 60].includes(cfg.autoSleepMinutes) ? cfg.autoSleepMinutes : 30,
       lastWakeAt: Number(preferences.auto?.lastWakeAt) || clock(),
       lastCreationAt: Number(preferences.auto?.lastCreationAt) || 0,
-      features: featuresOf(preferences.auto?.features),
     },
     checks: Object.fromEntries(IDS.map((id) => [id, { login: preferences.checks?.[id]?.login || null, models: preferences.checks?.[id]?.models || {} }])),
     modelCache,
-    // Life sharing, mini games and helpful notes (no AI call): their next times and what was shared last.
-    life: { shareAt: clock() + 20 * 60000, gameAt: clock() + 30 * 60000, noteAt: clock() + 60 * 60000, lastNoteAt: 0, kinds: [], last: {}, ...preferences.life },
-    game: preferences.game?.done === false ? preferences.game : null,
+    // Life sharing and helpful notes (no AI call): their next times and what was shared last.
+    life: { shareAt: preferences.life?.shareAt ?? clock() + 20 * 60000, noteAt: preferences.life?.noteAt ?? clock() + 60 * 60000, lastNoteAt: preferences.life?.lastNoteAt ?? 0, last: preferences.life?.last ?? {} },
   };
   // Resume from now, not from overdue appointments; never replay missed automatic actions.
-  for (const [key, minutes] of [['shareAt', 20], ['gameAt', 30], ['noteAt', 60]]) {
+  for (const [key, minutes] of [['shareAt', 20], ['noteAt', 60]]) {
     room.life[key] = Math.max(Number(room.life[key]) || 0, clock() + minutes * 60000);
-  }
-  if (room.game) {
-    room.game.nextAt = clock() + STEP_MS;
-    if (room.game.waitingSince) room.game.waitingSince = clock();
-    if (!room.auto.features.games) room.game = null;
   }
   room.targeted = room.callMode === 'pick';
   const checking = new Map();
@@ -269,20 +260,9 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       models: list.map((m) => ({ ...m, efforts: effortsFor(id, m.id, modelCache.gpt) || [], check: room.checks[id].models[m.id] || null })),
     }];
   }));
-  const workbench = new Workbench({
-    root, adapter, catalog,
-    defaults: () => ({
-      gpt: { model: 'gpt-6.1-sol', effort: 'medium' },
-      claude: { model: 'claude-opus-5-5', effort: 'medium' },
-      gemini: structuredClone(room.models.gemini),
-    }),
-    settings: (id, value, fallback) => settingsOf(id, value, fallback, modelCache.gpt),
-    onChange: () => { broadcast('workbench', {}); activityHook(); },
-    onActivity: record,
-  });
   const view = () => ({
-    // The running game is shown without its answer; the life bookkeeping stays on the server.
-    room: { ...room, modelCache: undefined, life: undefined, game: room.game && { id: room.game.id, kind: room.game.kind, joined: room.game.joined, prompt: userPrompt(room.game) }, name: room.roomName, userName: room.userName, checking: [...checking.keys()],
+    // Life bookkeeping stays on the server.
+    room: { ...room, modelCache: undefined, life: undefined, name: room.roomName, userName: room.userName, checking: [...checking.keys()],
       active: active ? { id: active.id, mode: active.mode, states: active.states, calls: active.calls, synthesizer: active.synthesizer, models: active.models } : null,
       autoRunning: !!autoJob, autoSleeping: autoSleeping(), autoDaily: LEVELS[room.auto.level].daily, autoReady: eligibleAuto().length > 0,
       autoUses: Object.fromEntries(IDS.map((id) => [id, autoSettings(id)])),
@@ -305,7 +285,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   function appActivity(id) {
     const name = (x) => nameOf(x);
     if (active?.states[id]?.status === '생성 중') return { kind: 'reply', text: '✍️ 답변 작성 중' };
-    if ([...workbench.jobs.values()].some((j) => j.task.working?.includes(id) || j.task.current?.actor === id)) return { kind: 'work', text: '💻 작업대에서 작업 중' };
     if (autoJob?.speaker === id) return { kind: 'talk', text: '💬 Talk에서 말하는 중' };
     if (autoJob?.members?.includes(id)) {
       const others = autoJob.members.filter((x) => x !== id).map(name);
@@ -317,7 +296,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (room.auto.on && autoSleeping()) return { kind: 'sleep', text: '💤 잠든 중' };
     return { kind: 'idle', text: '🟢 대기 중' };
   }
-  // Workbench progress is pushed with its own event; the room state is re-sent only when a member's activity changes.
+  // The room state is re-sent only when a member's house activity changes.
   let activityKey = '';
   activityHook = () => {
     const key = JSON.stringify(IDS.map((id) => memberActivity(id).text));
@@ -578,7 +557,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const timer = setTimeout(() => {
         timers.delete(timer);
         try {
-          if (!closed && sched.lastUserAt === asked && room.auto.on && room.auto.features.talk && !autoSleeping() && room.enabled[script[1].id]
+          if (!closed && sched.lastUserAt === asked && room.auto.on && !autoSleeping() && room.enabled[script[1].id]
             && usage.chatter < LIMITS.chatterPerDay && sinceUser(clock()).chatter < LIMITS.maxChatterSinceUser) say(script[1], first);
         } catch (e) { store.log('auto', redact(e.message)); }
       }, pairDelayMs);
@@ -692,7 +671,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       job.members = [...new Set(picks)];
       const topic = Math.floor(random() * topicCount);
       const lines = [];
-      const features = room.auto.features;
       for (const [index, id] of picks.entries()) {
         if (job.controller.signal.aborted || autoSleeping() || invalidReturn()) return;
         if (!eligibleAuto().includes(id)) continue;
@@ -709,24 +687,21 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
             + (hint.length ? `\n\n[최근 집 소식 — 참고만. 말투에 아주 약하게만 반영하고 다투지 마]\n${hint.map((l) => `- ${l}`).join('\n')}` : '')
           : plan.kind === 'member-back' ? memberGreetPrompt({ name: nameOf(plan.memberId), absent: plan.absent, history })
           : greetPrompt({ kind: plan.kind, userName: room.userName, history, previous: lines.at(-1) || '', absent: plan.absent, index });
-        // Creations follow the user's switches: photos/pictures ("일상 사진") and games ("미니게임").
+        // The app selects creations automatically within the shared cooldowns and call budget.
         const creative = plan.kind === 'chat' && index === 0 && usage.creations < ACTIVITY_LIMITS.daily
-          && clock() - room.auto.lastCreationAt >= ACTIVITY_LIMITS.gapMs && (features.photos || features.games);
-        const gameAllowed = features.games && peers.length > 0 && usage.games < GAME_LIMITS.daily
+          && clock() - room.auto.lastCreationAt >= ACTIVITY_LIMITS.gapMs;
+        const gameAllowed = peers.length > 0 && usage.games < GAME_LIMITS.daily
           && LEVELS[room.auto.level].daily - usage.calls >= GAME_LIMITS.turns;
         let result;
         try {
           result = await adapter.chat(id, AUTO_BRIEF + userLine(room.userName)
             + (plan.kind === 'chat' || plan.kind === 'member-back' ? peerContext(nameOf(id), peers.map(nameOf)) : ''), prompt + (creative ? ACTIVITY_PROMPT
-            + (gameAllowed ? '\n이번 턴 game을 제안해도 된다.' : '\n이번 턴 game은 선택하지 않는다. 동료·일일 게임 제한·호출 예산 조건이 맞지 않는다.')
-            + (features.photos ? '' : '\n이번 턴 postcard와 photo는 선택하지 않는다.') : '') + memoBlock(room.memos[id], room.memoOn, room.bios[id]),
+            + (gameAllowed ? '\n이번 턴 game을 제안해도 된다.' : '\n이번 턴 game은 선택하지 않는다. 동료·일일 게임 제한·호출 예산 조건이 맞지 않는다.') : '') + memoBlock(room.memos[id], room.memoOn, room.bios[id]),
             { settings, independent: true, webSearch: false, signal: job.controller.signal, timeoutMs: LIMITS.callTimeoutMs });
         } catch (e) { result = { ok: false, detail: e.message }; }
         if (job.controller.signal.aborted || autoSleeping() || invalidReturn()) return; // drop cancelled or outdated greetings too
         const split = result.ok ? splitMemo(result.text || '') : null;
         const parsed = creative && split ? parseActivity(split.text) : null;
-        // A creation the user switched off is dropped; the line itself is still posted.
-        if (parsed?.activity && !(parsed.activity.kind === 'game' ? features.games : features.photos)) parsed.activity = null;
         const text = split ? tidy(parsed?.text || split.text) : '';
         if (!text) {
           // Quota failures rest only this member; other failures retain the daily stop.
@@ -818,7 +793,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   let houseAt = clock() + MIN; // after a restart the unfinished work resumes soon (if Talk is on)
   function houseTurn() {
     const now = clock();
-    if (closed || houseJob || now < houseAt || !room.auto.on || !room.auto.features.house || autoSleeping() || active || autoJob) return Promise.resolve();
+    if (closed || houseJob || now < houseAt || !room.auto.on || autoSleeping() || active || autoJob) return Promise.resolve();
     const pace = HOUSE_PACE[room.auto.level];
     const usage = usageFor(room.auto, now);
     const order = IDS.filter((id) => eligibleAuto().includes(id));
@@ -836,7 +811,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const settings = autoSettings(id);
       const result = await adapter.chat(id, HOUSE_BRIEF, house.prompt(id, { resumedAfterMs: house.s.lastTurnAt ? now - house.s.lastTurnAt : 0, resting: IDS.filter((other) => other !== id && !order.includes(other)) }),
         { settings, independent: true, webSearch: false, signal: job.controller.signal, timeoutMs: LIMITS.callTimeoutMs * 2 });
-      if (job.controller.signal.aborted || !room.auto.on || !room.auto.features.house || autoSleeping()) return;
+      if (job.controller.signal.aborted || !room.auto.on || autoSleeping()) return;
       const reply = result.ok ? parseHouseReply(result.text) : null;
       if (!reply) {
         const detail = redact(result.detail || 'AI가 집 작업 JSON을 반환하지 않았습니다.').split('\n').map((l) => l.trim()).filter(Boolean).slice(-2).join(' ').slice(-400);
@@ -875,7 +850,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   }
   // ---------- life in the finished house: rules only, no AI call (lib/life.mjs) ----------
   const houseNames = Object.fromEntries(IDS.map((id) => [id, nameOf(id)]));
-  for (const text of [...store.warnings, ...activity.warnings, ...workbench.warnings, ...house.warnings]) {
+  for (const text of [...store.warnings, ...activity.warnings, ...house.warnings]) {
     post({ from: 'system', kind: 'error', text });
   }
   function startLife() {
@@ -886,12 +861,17 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     broadcast('house', {});
   }
   // Which life mode the real app state asks for: working at the desk, talking next to a Talk partner, resting.
-  const MIRROR = { reply: 'work', work: 'work', talk: 'talk', rest: 'rest', off: 'off', sleep: 'sleep' };
+  const MIRROR = { reply: 'work', talk: 'talk', rest: 'rest', off: 'off', sleep: 'sleep' };
   const lifeSched = { beatAt: clock() + MIN, eventAt: clock() + 15 * MIN };
   const userAway = (now) => now - Math.max(sched.lastUserAt, lastUserTs()) > 3 * 3600000;
+  function announceHouseEvent(event) {
+    record({ kind: 'house', actors: event.actors, text: event.text, ref: { houseEvent: event.id } });
+    post({ from: 'system', kind: 'house-event', text: event.text,
+      houseEvent: { id: event.id, actors: event.actors, tone: event.tone } });
+  }
   function lifeTick() {
     const now = clock();
-    if (closed || !room.auto.on || !room.auto.features.house || autoSleeping()) return null;
+    if (closed || !room.auto.on || autoSleeping()) return null;
     if (house.s.phase !== 'life') { if (isComplete(house)) startLife(); else return null; }
     const done = [];
     for (const id of IDS) {
@@ -918,8 +898,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const gap = EVENT_GAP[room.auto.level] * (house.s.open ? 0.5 : 1) * slow;
       lifeSched.eventAt = now + between([gap * 0.7, gap * 1.3]);
       if (event) {
-        record({ kind: 'house', actors: event.actors, text: event.text, ref: { houseEvent: event.id } });
-        if (event.ask) post({ from: 'system', kind: 'notice', text: `🏠 ${event.text}. 집에서 한마디 할 수 있어요. 그냥 두면 AI들이 알아서 정해요.` });
+        announceHouseEvent(event);
       }
     }
     if (drift(house, dayKey(now))) done.push(null);
@@ -947,25 +926,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     room.life.last = { theme: choice.theme, actor: choice.actor, captions: [...(last.captions || []), caption].slice(-20), refs: [...(last.refs || []), ...(choice.ref ? [choice.ref] : [])].slice(-30) };
     return { ...choice, caption, messageId: msg.id };
   }
-  function advanceGame(now) {
-    const game = room.game;
-    if (now < game.nextAt) return null;
-    const { lines, result } = stepGame(game, { names: { ...houseNames, user: room.userName }, rand: random, now });
-    for (const line of lines) if (!line.ownerMove) post({ from: line.from, text: line.text, auto: 'game', play: { id: game.id, kind: game.kind, ask: !!line.ask } });
-    if (result) {
-      const actors = [...new Set([...result.winners, ...game.players])].filter((x) => IDS.includes(x));
-      const entry = record({ kind: 'game', actors: result.winners.filter((x) => IDS.includes(x)).length ? result.winners.filter((x) => IDS.includes(x)) : actors, text: result.text, ref: { game: game.id } });
-      // A game nudges a relation by at most one step: agreeing in a balance game, or a correct answer praised by the host.
-      const winner = result.winners.find((x) => IDS.includes(x) && x !== game.host);
-      const pair = result.agree || (winner ? [game.host, winner] : null);
-      if (house.s.phase === 'life') noteEvent(house, { type: 'game', actors, text: result.text, pair, delta: pair ? 1 : 0 }, now);
-      if (house.s.phase === 'life') { house.save(); broadcast('house', {}); }
-      room.life.kinds = [...room.life.kinds, game.kind].slice(-5);
-      room.game = null;
-      return { lines, result, entry };
-    }
-    return { lines };
-  }
   function writeNote(now, present) {
     room.life.noteAt = now + 30 * 60000; // looked at again later either way
     if (now - room.life.lastNoteAt < NOTE_GAP) return null;
@@ -985,28 +945,20 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     room.life.lastNoteAt = now;
     return { author, path: rel, messageId: msg.id };
   }
-  // One look per tick: a running game moves on; new shares, games and notes wait for their cooldowns,
+  // One look per tick: new shares and notes wait for their cooldowns,
   // stay quiet while the user is talking, and slow down when the user has been away for long.
   function funTick() {
     const now = clock();
     if (closed || !room.auto.on || autoSleeping()) return null;
     const out = {};
-    if (room.game && room.auto.features.games && !active && !autoJob && now - Math.max(sched.lastUserAt, lastUserTs()) >= LIMITS.userPauseMs) out.game = advanceGame(now);
-    if (active || autoJob || houseJob || now - Math.max(sched.lastUserAt, lastUserTs()) < LIMITS.userPauseMs) { if (out.game) { persist(); publish(); } return out; }
+    if (active || autoJob || houseJob || now - Math.max(sched.lastUserAt, lastUserTs()) < LIMITS.userPauseMs) return out;
     const slow = userAway(now) ? 2 : 1;
     const present = IDS.filter((id) => room.enabled[id] && available[id] && !room.quotaRest[id]);
-    if (room.auto.features.photos && present.length && now >= room.life.shareAt) {
+    if (present.length && now >= room.life.shareAt) {
       out.share = shareLife(now, present);
       room.life.shareAt = now + jitter(SHARE_GAP[room.auto.level]) * slow;
     }
-    if (room.auto.features.games && !room.game && present.length >= 2 && now >= room.life.gameAt) {
-      room.game = startGame({ players: shuffled(present), rand: random, now, recent: room.life.kinds });
-      record({ kind: 'game', actors: room.game.players, text: `${nameOf(room.game.host)}가 ${{ balance: '밸런스 게임', quiz: '퀴즈', riddle: '수수께끼', chain: '끝말잇기' }[room.game.kind]} 시작`, ref: { game: room.game.id } });
-      out.started = room.game.kind;
-      room.life.gameAt = now + jitter(GAME_GAP[room.auto.level]) * slow;
-      room.game.nextAt = now; out.game = advanceGame(now);
-    }
-    if (room.auto.features.notes && present.length && now >= room.life.noteAt) out.note = writeNote(now, present);
+    if (present.length && now >= room.life.noteAt) out.note = writeNote(now, present);
     if (Object.keys(out).length) { persist(); publish(); }
     return out;
   }
@@ -1057,7 +1009,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   }
   const canGreet = () => {
     const u = usageFor(room.auto, clock());
-    return !closed && room.auto.features.talk && !active && !autoJob && !houseJob && !autoSleeping() && eligibleAuto().length > 0 && !u.stopped && u.calls < LEVELS[room.auto.level].daily;
+    return !closed && !active && !autoJob && !houseJob && !autoSleeping() && eligibleAuto().length > 0 && !u.stopped && u.calls < LEVELS[room.auto.level].daily;
   };
   async function greetReturnedMember() {
     if (active || autoJob) return false; // the next tick will handle the pending return
@@ -1100,7 +1052,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const now = clock();
     const usage = usageFor(room.auto, now);
     if (autoSleeping()) { await stopAuto(); publish(); return null; }
-    if (!room.auto.features.talk) return null; // "자동 대화" switched off: no rounds, mood lines or greetings
     if (await greetReturnedMember()) return 'greet';
     const since = sinceUser(now);
     const action = decide({ auto: room.auto, usage, now, busy: !!active || !!autoJob || !!houseJob, since, eligible: eligibleAuto().length, daily: LEVELS[room.auto.level].daily,
@@ -1143,10 +1094,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (!trusted(req)) return json(res, 403, { error: '로컬 접속만 허용합니다.' });
       const url = new URL(req.url, 'http://localhost');
       const p = decodeURIComponent(url.pathname);
-      if (p === '/api/workbench' || p.startsWith('/api/workbench/')) {
-        const body = req.method === 'POST' ? await bodyOf(req) : {};
-        return json(res, 200, await workbench.handle(req.method, url, body));
-      }
       if (req.method === 'GET' && p === '/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
         res.write('retry: 2000\n\n');
@@ -1246,9 +1193,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
             if (auto.level !== undefined && !LEVELS[auto.level]) return json(res, 400, { error: '대화 수준을 확인하세요.' });
             if (auto.level !== undefined && auto.level !== room.auto.level) { room.auto.level = auto.level; arm(); }
             if (auto.sleepMinutes !== undefined) room.auto.sleepMinutes = auto.sleepMinutes;
-            for (const key of AUTO_FEATURES) if (typeof auto.features?.[key] === 'boolean') room.auto.features[key] = auto.features[key];
-            if (auto.features?.games === false) room.game = null; // switching games off ends the running one
-            if (auto.features?.talk === false || auto.features?.house === false) await stopAuto();
             if (typeof auto.on === 'boolean') {
               // Turning it on starts the first round soon, so the user sees it work.
               if (auto.on && !room.auto.on) { room.auto.lastWakeAt = clock(); sched.callAt = clock() + 10000; sched.chatterAt = clock() + 5 * 60000; houseAt = Math.min(houseAt, clock() + MIN); }
@@ -1309,27 +1253,12 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           persist(); publish();
           return json(res, 200, view());
         }
-        // The owner may join the running mini game and answer; the game never waits long for it.
-        if (p === '/api/game/join' || p === '/api/game/answer') {
-          if (!room.game || room.game.id !== body.id) return json(res, 400, { error: '진행 중인 게임이 없어요.' });
-          if (p === '/api/game/join') {
-            joinGame(room.game);
-            record({ kind: 'game', actors: [], text: `${room.userName}도 게임에 참여`, ref: { game: room.game.id } });
-          } else {
-            answerGame(room.game, room.game.kind === 'chain' ? body.word : body.choice);
-            const shown = room.game.kind === 'chain' ? room.game.userAnswer : room.game.state.choices[room.game.userAnswer];
-            post({ from: 'user', text: shown, play: { id: room.game.id, kind: room.game.kind } });
-            room.game.nextAt = Math.min(room.game.nextAt, clock());
-          }
-          persist(); publish();
-          return json(res, 200, view());
-        }
         // The owner steps into house life only when they want to: answer an open matter, undo the latest
         // automatic change, or choose how often the house asks. Nothing here calls an AI.
         if (p === '/api/house/decide') {
-          decideHouse(house, body.choice, body.note);
+          decideHouse(house, body.choice, body.note, body.eventId ?? null);
           const event = lifeEvent(house, { ids: IDS.filter((id) => room.enabled[id] && available[id]), names: houseNames, rand: random, now: clock() });
-          if (event) record({ kind: 'house', actors: event.actors, text: event.text, ref: { houseEvent: event.id } });
+          if (event) announceHouseEvent(event);
           house.save(); broadcast('house', {});
           return json(res, 200, houseView());
         }
@@ -1430,8 +1359,9 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (req.method !== 'GET') return json(res, 405, { error: '지원하지 않는 요청입니다.' });
       if (p.startsWith('/ws/')) return await serve(res, store.abs(store.safeRel(p.slice(4))), true);
       const rel = p === '/' ? 'index.html' : p.slice(1);
+      if (rel === 'vendor/three.module.js') return await serve(res, path.join(ROOT, 'node_modules/three/build/three.module.js'));
       // Only current UI assets are served. Old game and developer pages are disabled.
-      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css', 'workbench.js', 'workbench.css', 'house.js', 'house.css', 'house-shape.mjs', 'recipients.mjs'].includes(rel)
+      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css', 'house.js', 'house.css', 'house-shape.mjs', 'house-view.mjs', 'house-scene.mjs', 'house-avatar.mjs', 'recipients.mjs'].includes(rel)
         && !/^avatars\/(?:(claude|gpt|gemini)(?:(-128)?\.webp|-pixel(-128)?\.png))$/.test(rel)) return json(res, 404, { error: '파일이 없습니다.' });
       return await serve(res, path.join(ROOT, 'public', rel));
     } catch (e) {
@@ -1452,7 +1382,6 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     await stopAuto();
     await pendingHouse;
     if (job) await job.done;
-    await workbench.close();
     for (const client of clients) client.end();
     clients.clear();
     if (usage) usage.onUpdate = () => {};
@@ -1466,7 +1395,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     };
     pollUsage();
   }
-  return { server, close, store, view, workbench, house, activity, room, tick: autoTick, lifeTick, funTick, get active() { return active; } };
+  return { server, close, store, view, house, activity, room, tick: autoTick, lifeTick, funTick, get active() { return active; } };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

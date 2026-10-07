@@ -15,7 +15,6 @@ import { createAssistantServer, loadConfig } from '../server.mjs';
 import { House, HOUSE_LIMITS, HOUSE_BRIEF } from '../lib/house.mjs';
 import { LEVELS } from '../lib/auto.mjs';
 import { noteEvent } from '../lib/life.mjs';
-import { startGame, STEP_MS } from '../lib/play.mjs';
 import { ACTIVITY_MAX } from '../lib/activity.mjs';
 import { UsageMonitor } from '../lib/usage.mjs';
 
@@ -102,14 +101,14 @@ test('Store retries Windows open/rename locks, commits memory only after append,
 
 test('corrupt JSON and incomplete JSONL are preserved, repaired and visibly reported without blocking startup', async (t) => {
   const root = temp(t), data = path.join(root, 'data');
-  fs.mkdirSync(path.join(data, 'workbench'), { recursive: true });
-  const files = ['state.json', 'workspace-meta.json', 'house.json', 'activity.json', 'workbench/state.json'];
+  fs.mkdirSync(data, { recursive: true });
+  const files = ['state.json', 'workspace-meta.json', 'house.json', 'activity.json'];
   for (const file of files) fs.writeFileSync(path.join(data, file), '{"broken":');
   const good = JSON.stringify({ id: 7, from: 'user', text: 'keep me', ts: 1 });
   fs.writeFileSync(path.join(data, 'messages.jsonl'), good + '\n{"id":8');
   const { app } = await appAt(t, root, { now: Date.now() });
   assert.equal(app.store.messages.find((m) => m.id === 7).text, 'keep me');
-  assert.equal(app.store.messages.filter((m) => /원본 보존/.test(m.text)).length, 6);
+  assert.equal(app.store.messages.filter((m) => /원본 보존/.test(m.text)).length, files.length + 1);
   for (const file of [...files, 'messages.jsonl']) {
     const full = path.join(data, file);
     const backups = fs.readdirSync(path.dirname(full)).filter((name) => name.startsWith(path.basename(file) + '.unreadable-'));
@@ -127,12 +126,11 @@ test('corrupt JSON and incomplete JSONL are preserved, repaired and visibly repo
   t.mock.restoreAll();
 });
 
-test('a forcibly terminated writer leaves committed chats, settings, house and interrupted work recoverable', async (t) => {
+test('a forcibly terminated writer leaves committed chats, settings and house recoverable', async (t) => {
   const root = temp(t);
   const code = `
     import { Store } from ${JSON.stringify(new URL('../lib/store.mjs', import.meta.url).href)};
     import { House } from ${JSON.stringify(new URL('../lib/house.mjs', import.meta.url).href)};
-    import { writeJsonFile } from ${JSON.stringify(new URL('../lib/atomic.mjs', import.meta.url).href)};
     import fs from 'node:fs'; import path from 'node:path';
     const root = process.argv[1], store = new Store(root);
     store.addMessage({ from: 'user', text: 'crash recovery' });
@@ -140,12 +138,6 @@ test('a forcibly terminated writer leaves committed chats, settings, house and i
     const house = new House(path.join(root, 'data/house.json'), { ids: ['gpt'], names: {} });
     house.s.phase = 'life'; house.s.relations = { 'claude:gpt': 75 };
     house.s.events = [{ id: 1, at: 1, actors: ['gpt'], text: 'saved event' }]; house.save();
-    fs.mkdirSync(path.join(root, 'data/workbench'));
-    writeJsonFile(path.join(root, 'data/workbench/state.json'), { projects: [], sessions: [
-      { id: 's1', status: 'waiting', pending: { id: 'approval' }, messages: [], changes: [], tasks: [
-        { id: 't1', status: 'running', current: { action: 'plan_approval' } }
-      ] }
-    ] });
     process.stdout.write('READY\\n'); setInterval(() => {}, 1000);
   `;
   const child = spawn(process.execPath, ['--input-type=module', '-e', code, root], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -160,37 +152,29 @@ test('a forcibly terminated writer leaves committed chats, settings, house and i
   const { app, adapter } = await appAt(t, root, { now: Date.now() });
   assert.equal(app.store.messages[0].text, 'crash recovery');
   assert.equal(app.room.roomName, 'saved room');
-  assert.equal(app.room.auto.features.notes, false);
+  assert.equal(app.room.auto.features, undefined, 'legacy individual switches are no longer settings');
   assert.equal(app.house.s.phase, 'life');
   assert.equal(app.house.s.relations['claude:gpt'], 75);
   assert.equal(app.house.s.events[0].text, 'saved event');
-  const session = app.workbench.session('s1');
-  assert.equal(session.status, 'interrupted');
-  assert.equal(session.pending, null);
-  assert.equal(session.tasks[0].stopReason, 'restart');
   assert.equal(adapter.calls.length, 0);
 });
 
-test('restart defers overdue fun, resumes a game one step at a time and OFF drops pending chatter', async (t) => {
+test('restart defers overdue activity, discards an old chat game and OFF drops pending chatter', async (t) => {
   const root = temp(t), clock = { now: new Date(2026, 9, 7, 10).getTime() };
   const store = new Store(root);
-  const game = startGame({ players: IDS, now: clock.now - DAY, rand: () => 0 });
   store.state.assistant = { auto: { on: true, sleepMinutes: 0 }, life: { shareAt: 1, gameAt: 1, noteAt: 1 },
-    game: { ...game, joined: true, waitingSince: clock.now - DAY } };
+    game: { id: 'legacy-game', kind: 'quiz', players: IDS, done: false, joined: true, waitingSince: clock.now - DAY } };
   store.saveState();
   const { app, post, adapter } = await appAt(t, root, clock);
-  assert.equal(app.room.game.nextAt, clock.now + STEP_MS);
-  assert.equal(app.room.game.waitingSince, clock.now);
+  assert.equal(app.room.game, undefined);
+  assert.equal(app.room.life.gameAt, undefined);
   for (let i = 0; i < 50; i++) app.funTick();
   assert.equal(app.store.messages.length, 0);
-  assert.equal(app.room.game.turn, 0);
-  await post('/api/room', { auto: { features: { games: false } } });
-  assert.equal(app.room.game, null);
   app.room.auto.usage.stopped = 'test';
   clock.now += 16 * MIN;
   await app.tick();
+  await post('/api/room', { auto: { on: false } });
   const before = app.store.messages.length;
-  await post('/api/room', { auto: { features: { talk: false } } });
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(app.store.messages.length, before);
   assert.equal(adapter.calls.length, 0);
@@ -201,7 +185,7 @@ test('accelerated 12-day life keeps events, house logs, activities and SVG files
   const house = new House(path.join(root, 'data/house.json'), { ids: IDS, names: {} });
   house.s.phase = 'life'; house.save();
   const { app, post, adapter } = await appAt(t, root, clock);
-  await post('/api/room', { auto: { on: true, level: 'high', features: { talk: false, house: true, photos: true, games: true, notes: true } } });
+  await post('/api/room', { auto: { on: true, level: 'high' } });
   const seen = new Set();
   for (let i = 0; i < 576; i++) {
     clock.now += 30 * MIN;
@@ -218,7 +202,6 @@ test('accelerated 12-day life keeps events, house logs, activities and SVG files
   }
   assert.ok(seen.size > 80, `generated ${seen.size}`);
   assert.equal(app.store.listFiles().filter((f) => f.path.startsWith('life/')).length, 80);
-  assert.ok(app.room.life.kinds.length <= 5);
   assert.ok(app.room.life.last.refs.length <= 30);
   assert.ok(app.room.life.last.captions.length <= 20);
   assert.equal(adapter.calls.length, 0);
@@ -344,7 +327,7 @@ test('all automatic features share bounded timers and budgets over two accelerat
     }
     assert.ok(adapter.calls.length > 0);
     assert.ok(app.store.messages.some((m) => m.auto === 'life'));
-    assert.ok(app.activity.entries.some((entry) => entry.kind === 'game'));
+    assert.ok(!app.activity.entries.some((entry) => entry.kind === 'game'), 'chat games are no longer automatic activities');
     const count = adapter.calls.length, messages = app.store.messages.length;
     app.room.auto.on = false;
     clock.now += DAY;

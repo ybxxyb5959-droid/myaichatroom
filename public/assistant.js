@@ -1,5 +1,5 @@
 // Personal assistant UI; the existing portraits and group-chat layout are reused.
-import { esc, renderMarkdown, extractLinks, splitFold, buildHandoff, houseNoticeHTML } from './format.mjs';
+import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML, houseEventHTML } from './format.mjs';
 import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
 
 const $ = (s) => document.querySelector(s);
@@ -51,7 +51,7 @@ let replyTo = null;
 const replyChip = document.createElement('button');
 replyChip.type = 'button'; replyChip.className = 'reply-quote'; replyChip.hidden = true;
 replyChip.setAttribute('aria-label', '답장 취소');
-const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id, state.room.game]);
+const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id]);
 const wave = (text) => `<span class="typing-wave" aria-label="${esc(text)}">${[...text].map((c, i) => `<span aria-hidden="true" style="--i:${i}">${esc(c)}</span>`).join('')}</span>`;
 const runOpen = new Map(); // discussion runs the user opened or closed by hand
 const input = $('#input');
@@ -137,6 +137,13 @@ function messageNode(m) {
   const node = document.createElement('div');
   node.dataset.id = m.id;
   if (m.from === 'system') {
+    if (m.kind === 'house-event') {
+      node.className = 'sys k-house-event';
+      node.innerHTML = houseEventHTML(m.text, m.houseEvent?.id);
+      const button = node.querySelector('[data-house-event]');
+      if (button) button.onclick = () => window.dispatchEvent(new CustomEvent('house-open-event', { detail: { id: Number(button.dataset.houseEvent) } }));
+      return node;
+    }
     if (m.kind === 'house-build') {
       node.className = 'sys k-house-build';
       const actor = member(m.by);
@@ -175,7 +182,6 @@ function messageNode(m) {
   node.innerHTML = `${face}<div class="m-body">
     <div class="m-head"><span class="n">${esc(who?.name || m.from)}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${phase}</div>
     <div class="line"><div class="bubble"><div class="text">${bodyHTML(m)}</div>${attachment}${game}${memo}${sources}</div></div></div>`;
-  if (m.play?.ask && state.room.game?.id === m.play.id) node.querySelector('.bubble').append(playControls(state.room.game));
   const bubble = node.querySelector('.bubble');
   if (m.replyPreview) {
     const quote = document.createElement('button');
@@ -196,9 +202,6 @@ function messageNode(m) {
     replyChip.hidden = false; input.before(replyChip); input.focus();
   };
   actions.append(answer);
-  // Work-type answers (the AI's own tag) or answers with code can be carried to the workbench. Discussion
-  // runs get one button for the whole run instead (runNode).
-  if (who && m.runId && !m.auto && !isDiscussion(m) && (m.intent === 'work' || /```/.test(m.text || ''))) actions.append(handoffButton(m.id));
   const picker = document.createElement('details'); picker.className = 'reaction-picker';
   const summary = document.createElement('summary'); summary.textContent = '공감';
   picker.append(summary); actions.append(picker);
@@ -223,35 +226,6 @@ function messageNode(m) {
   return node;
 }
 const isDiscussion = (m) => m.mode === 'discussion' || /^(opinion|review|final)$/.test(m.phase || '');
-// The running mini game: join if you like, then answer. The AIs go on either way.
-function playControls(game) {
-  const box = document.createElement('div'); box.className = 'play-controls';
-  const ask = game.prompt;
-  const call = async (route, body) => { try { applyState(await api(route, { id: game.id, ...body })); } catch (e) { toast(e.message); } };
-  if (!ask) { box.innerHTML = game.joined ? '<small>참여 중 · 다음 차례를 기다리는 중</small>' : ''; return box; }
-  if (ask.join) {
-    const join = document.createElement('button'); join.type = 'button'; join.className = 'model-pill'; join.textContent = '나도 참여';
-    join.title = '안 눌러도 AI들끼리 끝까지 진행해요';
-    join.onclick = () => call('/api/game/join', {});
-    box.append(join);
-  } else if (ask.choices) {
-    box.append(...ask.choices.map((c, i) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'model-pill'; b.textContent = c; b.onclick = () => call('/api/game/answer', { choice: i }); return b; }));
-  } else if (ask.word !== undefined) {
-    const form = document.createElement('form');
-    form.innerHTML = `<input maxlength="6" placeholder="${esc(ask.word)}(으)로 시작" aria-label="끝말잇기 낱말"><button type="submit" class="model-pill">내기</button>`;
-    form.onsubmit = (e) => { e.preventDefault(); call('/api/game/answer', { word: form.querySelector('input').value }); };
-    box.append(form);
-  }
-  return box;
-}
-// Fills the workbench request box only; nothing runs until the user picks a mode and sends it there.
-function handoffButton(targetId) {
-  const button = document.createElement('button'); button.type = 'button'; button.className = 'handoff';
-  button.textContent = '🛠 이 대화로 작업 시작';
-  button.title = '작업대를 열고 이 질문과 AI 답변을 작업 요청 입력창에 채워요. 바로 실행되지는 않아요.';
-  button.onclick = () => window.dispatchEvent(new CustomEvent('workbench-prefill', { detail: { text: buildHandoff(state.messages, targetId, nameOf) } }));
-  return button;
-}
 function runFooter(end) {
   const div = document.createElement('div');
   div.className = `run-foot ${end.kind}`;
@@ -291,11 +265,6 @@ function runNode({ runId, msgs }) {
   node.append(head, details);
   if (final) node.append(messageNode(final));
   if (end) node.append(runFooter(end));
-  const anchor = final || [...steps].reverse().find((m) => member(m.from) && m.kind !== 'error');
-  if (!running && anchor) {
-    const row = document.createElement('div'); row.className = 'chat-actions run-handoff';
-    row.append(handoffButton(anchor.id)); node.append(row);
-  }
   return node;
 }
 function renderMessages() {
@@ -521,22 +490,11 @@ const LEVEL_HINTS = {
   medium: '적당히 대화하고 활동해요',
   high: '시끌벅적하게 자주 대화해요 · 사용량이 가장 많아요',
 };
-// Automatic activity switches; "ready" says whether the feature already exists (the others only keep the choice).
-const FEATURES = [
-  { key: 'talk', label: '자동 대화', ready: true }, { key: 'house', label: '집 활동', ready: true },
-  { key: 'photos', label: '일상 사진', ready: true, help: '가상 사진·그림 공유' }, { key: 'games', label: '미니게임', ready: true, help: '지금은 작은 게임 공동 제작' },
-  { key: 'notes', label: '도움되는 메모', ready: true, help: '활동이 쌓이면 가끔 정리 메모를 작업공간에 남겨요' },
-];
 function renderAuto() {
   const a = state.room.auto;
   $('#autoSleep').value = String(a.sleepMinutes);
   $('#levelSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.level === a.level));  $('#levelHint').textContent = LEVEL_HINTS[a.level];
   $('#levelHint').title = '';
-  const key = JSON.stringify(a.features);
-  if ($('#featureList').dataset.key !== key) {
-    $('#featureList').dataset.key = key;
-    $('#featureList').innerHTML = FEATURES.map((f) => `<label class="feature" title="${esc(f.help || '')}"><input type="checkbox" data-feature="${f.key}" ${a.features[f.key] ? 'checked' : ''}><span>${esc(f.label)}</span>${f.ready ? '' : '<small>준비 중</small>'}</label>`).join('');
-  }
   // Only a problem is worth a line here; the rest is explained by the tour and under "자세히".
   const note = !a.on ? '' : state.room.autoSleeping ? '잠든 중이에요. 말 걸면 다시 깨어나요.' : state.room.autoRest ? `${restText(state.room)}.` : !state.room.autoReady ? '대화할 수 있는 AI가 없어 짧은 대사만 나와요.' : '';
   $('#autoNote').textContent = note;
@@ -1221,10 +1179,6 @@ const toggleAuto = () => update({ auto: { on: !state.room.auto.on } });
 $('#chatterBtn').onclick = toggleAuto;
 $('#powerBtn').onclick = toggleAuto;
 $('#autoSleep').onchange = (e) => update({ auto: { sleepMinutes: Number(e.target.value) } });
-$('#featureList').addEventListener('change', (e) => {
-  const box = e.target.closest('[data-feature]');
-  if (box) update({ auto: { features: { [box.dataset.feature]: box.checked } } });
-});
 $('#levelSeg').addEventListener('click', (e) => {
   const b = e.target.closest('[data-level]');
   if (b) update({ auto: { level: b.dataset.level } });
@@ -1323,8 +1277,7 @@ $('#loadMore').onclick = async () => {
 };
 function connect() {
   const events = new EventSource('/events');
-  events.addEventListener('state', (e) => { applyState(JSON.parse(e.data)); window.dispatchEvent(new CustomEvent('usage-update', { detail: state.usage })); });
-  events.addEventListener('workbench', () => window.dispatchEvent(new Event('workbench-update')));
+  events.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
   events.addEventListener('house', () => window.dispatchEvent(new Event('house-update')));
   events.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);

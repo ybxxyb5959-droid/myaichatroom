@@ -8,7 +8,6 @@ import { pickPrimary } from '../lib/callpick.mjs';
 import { AUTO_BRIEF, LEVELS } from '../lib/auto.mjs';
 import { HOUSE_BRIEF } from '../lib/house.mjs';
 import { IDS as ORDER } from '../lib/discussion.mjs';
-import { Workbench, WORK_IDS } from '../lib/workbench.mjs';
 import { createAssistantServer, loadConfig } from '../server.mjs';
 
 const IDS = ['gemini', 'gpt', 'claude'];
@@ -137,7 +136,7 @@ test('a builder that @mentions a teammate in its house line hands the next turn 
     return { ok: true, text: JSON.stringify({ say: first ? `@${{ claude: 'Claude', gpt: 'GPT', gemini: 'Gemini' }[picked.target]} 벽을 이어서 부탁해` : '좋아', actions: [] }) };
   };
   const picked = {};
-  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, notes: false, games: false } } });
+  await s.post('/api/room', { auto: { on: true } });
   clock.t += 2 * 60000;
   for (let i = 0; i < 40 && !s.adapter.calls.some((c) => c.house); i++) await new Promise((r) => setTimeout(r, 25));
   clock.t += 2 * 60 * 60000;
@@ -158,7 +157,7 @@ test('nobody is @called in the house chat who is resting; the prompt names who i
     if (!brief.startsWith(HOUSE_BRIEF)) return base;
     return { ok: true, text: JSON.stringify({ say: '@Claude 러그 깔아줘', actions: [] }) };
   };
-  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, notes: false, games: false } } });
+  await s.post('/api/room', { auto: { on: true } });
   clock.t += 2 * 60000;
   for (let i = 0; i < 40 && !s.adapter.calls.some((c) => c.house); i++) await new Promise((r) => setTimeout(r, 25));
   clock.t += 2 * 60 * 60000;
@@ -355,7 +354,7 @@ test('a busy model rests only that member for ten minutes; lasting errors still 
   const chat = s.adapter.chat;
   let failure = 'ERROR: Selected model is at capacity. Please try a different model.';
   s.adapter.chat = async (id, brief, ...rest) => (brief.startsWith(AUTO_BRIEF) && id === 'gpt' ? { ok: false, detail: failure } : chat(id, brief, ...rest));
-  await s.post('/api/room', { auto: { on: true, level: 'high', features: { photos: false, games: false, house: false } } });
+  await s.post('/api/room', { auto: { on: true, level: 'high' } });
   clock.t += 60000; await s.app.tick();
   let view = s.app.view();
   assert.equal(view.room.auto.usage.stopped, null, 'a busy model does not stop the room');
@@ -405,20 +404,21 @@ test('a busy model rests only that member for ten minutes; lasting errors still 
   assert.equal(s.app.view().room.auto.usage.stopped, 'auth', 'a lasting stop is kept');
 });
 
-test('feature switches are saved, restored and respected; the house turn is recorded', async (t) => {
+test('activity selection cannot be configured, old switches are ignored, and house notices survive restart', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const root = temp(t, 'activity-features-');
   const s = await start(t, { clock, root, autoTickMs: 25 });
   await s.post('/api/check/login', {});
-  assert.deepEqual((await s.get('/api/state')).room.auto.features, { talk: true, house: true, photos: true, games: true, notes: true });
-  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, notes: false } } });
-  // Talk is off, so only the house works: one house turn becomes a 'house' entry.
+  assert.equal((await s.get('/api/state')).room.auto.features, undefined);
+  await s.post('/api/room', { auto: { on: true, level: 'high', features: { talk: false, house: false, photos: false, games: false, notes: false } } });
+  assert.equal((await s.get('/api/state')).room.auto.features, undefined);
+  // Old switches cannot disable either house building or automatic conversation.
   clock.t += 2 * 60000;
   for (let i = 0; i < 40 && !s.adapter.calls.some((c) => c.house); i++) await new Promise((r) => setTimeout(r, 25));
   await new Promise((r) => setTimeout(r, 50));
   assert.ok(s.adapter.calls.some((c) => c.house));
-  assert.ok(!s.adapter.calls.some((c) => c.auto), 'no Talk call while 자동 대화 is off');
-  assert.equal(await s.app.tick(), null);
+  await s.app.tick();
+  assert.ok(s.adapter.calls.some((c) => c.auto), 'automatic conversation is also selected');
   const house = (await s.get('/api/activity?kind=house')).entries[0];
   assert.match(house.text, /집 작업: 바닥 4칸/);
   assert.equal(typeof house.ref.houseTurn, 'number');
@@ -437,29 +437,11 @@ test('feature switches are saved, restored and respected; the house turn is reco
   await s.app.close();
   const again = await start(t, { clock, root });
   assert.equal(again.app.store.messages.filter((m) => m.kind === 'house-build').length, 1, 'the notice survives restart');
-  assert.deepEqual((await again.get('/api/state')).room.auto.features, { talk: false, house: true, photos: false, games: true, notes: false });
-  await again.post('/api/room', { auto: { features: { house: false } } });
+  assert.equal((await again.get('/api/state')).room.auto.features, undefined);
+  await again.post('/api/room', { auto: { on: false } });
   const before = again.adapter.calls.length;
   clock.t += 120 * 60000;
   await again.app.tick();
   assert.equal(again.adapter.calls.length, before);
 });
 
-test('a finished workbench task and a revert are reported to the shared timeline', async (t) => {
-  const root = temp(t, 'activity-wb-');
-  const project = path.join(root, 'project'); fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, 'a.txt'), 'one\n');
-  const replies = [{ action: 'read', path: 'a.txt' }, { action: 'patch', path: 'a.txt', find: 'one', replace: 'two' }, { action: 'done', text: '완료' }];
-  const events = [];
-  const bench = new Workbench({ root, adapter: { maxPromptChars: () => 26000, chat: async () => ({ ok: true, text: JSON.stringify(replies.shift()) }) },
-    defaults: () => Object.fromEntries(WORK_IDS.map((id) => [id, { model: id, effort: '' }])), catalog: () => Object.fromEntries(WORK_IDS.map((id) => [id, { available: true }])),
-    settings: (_id, value, fallback) => ({ ...fallback, ...value }), onActivity: (e) => events.push(e) });
-  t.after(() => bench.close());
-  const p = bench.addProject(project), s = bench.createSession(p.id);
-  bench.configure(s.id, { lead: 'claude' });
-  bench.start(s.id, '로그인 오류 수정\n자세히'); await bench.jobs.get(s.id).done;
-  assert.deepEqual(events[0], { kind: 'task', actors: ['claude'], text: '"로그인 오류 수정" 작업 완료', ref: { sessionId: s.id, taskId: s.tasks[0].id } });
-  bench.revert(s.id, s.tasks[0].id);
-  assert.match(events[1].text, /작업 변경 되돌림 \(1개 파일\)/);
-  assert.ok(!JSON.stringify(events).includes('two'), 'no file contents are copied');
-});

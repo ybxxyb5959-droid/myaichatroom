@@ -8,7 +8,7 @@ export function limitWindows(id, usage) {
 // Battery colour from the remaining share: plenty / getting low / nearly empty.
 export const batteryLevel = (pct) => (pct < 20 ? 'low' : pct < 50 ? 'mid' : 'ok');
 
-// Remaining share of one AI for the workbench: the tightest of its windows. A failed, restored (cached)
+// Remaining share of one AI: the tightest of its windows. A failed, restored (cached)
 // or stale report is "unknown" — nothing is guessed from it.
 export const LOW_QUOTA = 20;
 export const QUOTA_STALE_MS = 30 * 60 * 1000;
@@ -17,27 +17,6 @@ export function quotaOf(id, usage, now = Date.now()) {
   if (!usage?.ok || usage.restored || !Number.isFinite(usage.at) || now - usage.at > QUOTA_STALE_MS || !windows.length) return { known: false };
   const pct = Math.round(Math.min(...windows.map((w) => w.remainingPct)));
   return { known: true, pct, level: batteryLevel(pct), low: pct < LOW_QUOTA };
-}
-// The candidate with the most usage left (ties keep the given order). Only a usage-headroom hint, never
-// a judgement of ability; null when no candidate has a known, non-low share.
-export function recommendByQuota(ids, usage, now = Date.now()) {
-  let best = null;
-  for (const id of ids) {
-    const q = quotaOf(id, usage?.[id], now);
-    if (q.known && !q.low && (!best || q.pct > best.pct)) best = { id, pct: q.pct };
-  }
-  return best;
-}
-// Before a workbench run: which chosen AIs are nearly out, and which choices the user can make instead.
-// The user's choice is never changed here; this only describes the options.
-export function quotaCheck({ mode, lead, participants = [], usage, available = [], now = Date.now() }) {
-  const ids = mode === 'solo' ? [lead] : [...new Set([lead, ...participants])];
-  const low = ids.filter((id) => quotaOf(id, usage?.[id], now).low);
-  if (!low.length) return null;
-  const pct = Object.fromEntries(low.map((id) => [id, quotaOf(id, usage?.[id], now).pct]));
-  const leadLow = low.includes(lead);
-  const alternative = leadLow ? recommendByQuota(available.filter((id) => !low.includes(id)), usage, now) : null;
-  return { mode, ids, low, pct, leadLow, alternative, canExclude: mode !== 'solo' && !leadLow && ids.length - low.length >= 2 };
 }
 
 // One plain status per AI. Finding the program is not enough: "활성" needs a real call that worked.

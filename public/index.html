@@ -6,7 +6,6 @@
 <title data-i18n="app.title">AI 단톡방</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
-<link rel="stylesheet" href="/workbench.css">
 <link rel="stylesheet" href="/house.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='10' width='52' height='38' rx='12' fill='%23d97a3a'/%3E%3Cpath d='M20 48l-4 10 14-10z' fill='%23d97a3a'/%3E%3Ccircle cx='22' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='29' r='4' fill='%23fff'/%3E%3C/svg%3E">
 </head>
@@ -44,9 +43,6 @@
           <div class="seg" id="levelSeg" role="group" aria-label="AI 활동량"><button type="button" data-level="low">🌙 조용히</button><button type="button" data-level="medium">🙂 보통</button><button type="button" data-level="high">🎉 활발하게</button></div>
         </div>
         <p class="hint" id="levelHint"></p>
-        <details class="feature-fold"><summary>활동범위</summary>
-          <div class="feature-list" id="featureList" role="group" aria-label="자동 활동 종류"></div>
-        </details>
         <p class="hint" id="autoNote" hidden></p>
         <div class="field">
           <label class="field-label" for="autoSleep">자동 잠들기</label>
@@ -87,9 +83,6 @@
         <button class="icon-btn ws-toggle" id="wsBtn" type="button" aria-label="작업공간 열기/닫기" data-i18n-aria="head.ws">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           <span class="badge" id="wsBadge" hidden></span>
-        </button>
-        <button class="icon-btn" id="workbenchBtn" type="button" aria-label="작업대 열기" title="작업대" aria-expanded="false" aria-controls="workbench">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(40 12 12)" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10v10a1.5 1.5 0 0 0 3 0V10" fill="none"/><path d="M4 4h9c3 0 5 1.5 7 4l-5-1-2 3H4Z" fill="currentColor" fill-opacity=".2"/><path d="M6.5 4v6M9 17h3" fill="none"/></g></svg>
         </button>
       </div>
     </header>
@@ -172,7 +165,6 @@
 </div>
 
 <script type="module" src="/assistant.js"></script>
-<script type="module" src="/workbench.js"></script>
 <script type="module" src="/house.js"></script>
 </body>
 </html>

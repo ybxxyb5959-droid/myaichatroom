@@ -4,8 +4,8 @@
 :root[data-theme="dark"] .house { background: #1d2230; color: #e7e9ef; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .house { background: #1d2230; color: #e7e9ef; } }
 @keyframes hs-open { from { opacity: 0; } to { opacity: 1; } }
-.house canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
-.house canvas:active { cursor: grabbing; }
+.house #hsCanvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.house #hsCanvas:active { cursor: grabbing; }
 .hs-bar { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; align-items: center; gap: 12px; padding: 8px 8px 8px 16px; border-radius: 14px; background: color-mix(in srgb, var(--panel, #fff) 88%, transparent); border: 1px solid var(--line, #0002); backdrop-filter: blur(8px); color: var(--text, inherit); }
 .hs-bar, .hs-plan, .hs-log, .hs-help { z-index: 2; }
 .hs-empty, .hs-help { pointer-events: none; }
@@ -15,7 +15,7 @@
 .hs-bar svg { width: 20px; height: 20px; }
 .hs-bar span { flex: 1; font-size: 12px; color: var(--muted, #667); }
 .hs-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; font-size: 14px; color: var(--muted, #667); line-height: 1.7; }
-.hs-plan { position: absolute; top: 70px; left: 12px; width: min(300px, calc(100vw - 24px)); padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 88%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); animation: hs-pop .22s ease-out; }
+.hs-plan { position: absolute; top: 118px; left: 12px; width: min(300px, calc(100vw - 24px)); max-height: 20vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 88%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); animation: hs-pop .22s ease-out; }
 .hs-plan p { margin: 4px 0 0; line-height: 1.55; }
 .hs-log { position: absolute; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); display: grid; gap: 4px; }
 .hs-log > button { justify-self: start; padding: 4px 12px; border-radius: 9px; border: 1px solid var(--line, #0002); background: color-mix(in srgb, var(--panel, #fff) 92%, transparent); color: var(--text, inherit); font: inherit; font-size: 12px; cursor: pointer; }
@@ -24,7 +24,7 @@
 .hs-line { margin: 3px 0; overflow-wrap: anywhere; animation: hs-pop .22s ease-out; }
 .hs-line.build { color: var(--muted, #667); font-size: 12px; }
 .hs-help { position: absolute; right: 14px; bottom: 12px; margin: 0; font-size: 12px; color: var(--muted, #667); }
-.hs-diary { position: absolute; top: 70px; right: 12px; z-index: 2; width: min(320px, calc(100vw - 24px)); max-height: calc(100vh - 140px); overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
+.hs-diary { position: absolute; top: 70px; right: 12px; z-index: 2; width: min(320px, calc(100vw - 24px)); max-height: 28vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
 .hs-diary[hidden] { display: none; }
 .hs-diary header { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .hs-mode { display: flex; gap: 2px; }
@@ -45,3 +45,34 @@
 @keyframes hs-pop { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (max-width: 640px) { .hs-help { display: none; } #hsLogList { max-height: 26vh; } }
 @media (prefers-reduced-motion: reduce) { .house, .hs-plan, .hs-line { animation: none; } }
+.hs-tools { position: absolute; z-index: 3; top: 70px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+.hs-tools button { padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line, #0002); background: var(--panel, #fff); color: var(--text, #1b1f2a); cursor: pointer; font: inherit; font-size: 12px; }
+.hs-tools button[aria-pressed="true"] { background: var(--accent, #1f9d74); color: white; }
+.hs-tools button:disabled { opacity: .5; cursor: default; }
+.hs-cameras { position: absolute; z-index: 2; right: 12px; bottom: 42px; width: min(440px, 42vw); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.hs-cameras[hidden], .hs-error[hidden] { display: none; }
+.hs-cameras button { padding: 0; overflow: hidden; border: 2px solid #ffffff55; border-radius: 10px; background: #171c24; color: white; text-align: left; cursor: pointer; min-width: 0; }
+.hs-cameras button[aria-pressed="true"] { border-color: #52d9ab; }
+.hs-cameras canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
+.hs-cameras span { display: block; padding: 5px 8px; font-size: 11px; }
+.hs-cameras small { color: #9bd6bc; float: right; font-size: 9px; }
+.hs-error { position: absolute; z-index: 4; top: 45%; left: 50%; transform: translateX(-50%); padding: 14px; border-radius: 12px; background: #fff0e9; color: #923b22; max-width: 90vw; }
+.hs-selected-event { margin: 8px 0; padding: 8px; border: 1px solid var(--accent, #1f9d74); border-radius: 9px; }
+.hs-selected-event[hidden] { display: none; }
+.hs-selected-event p { margin: 5px 0; line-height: 1.5; }
+.hs-selected-event small { display: block; margin-bottom: 6px; }
+.hs-selected-event button { background: transparent; color: inherit; border: 1px solid var(--line, #0002); border-radius: 6px; padding: 4px 7px; cursor: pointer; }
+.house button:focus-visible { outline: 3px solid #247af2; outline-offset: 3px; }
+@media (max-width: 640px) {
+  .hs-bar { gap: 6px; top: 6px; left: 6px; right: 6px; }
+  .hs-bar span { font-size: 10px; }
+  .hs-tools { top: 76px; left: 6px; right: 6px; gap: 4px; }
+  .hs-tools button { padding: 6px 8px; font-size: 11px; }
+  .hs-plan { top: 116px; left: 6px; width: calc(50vw - 12px); max-height: 16vh; padding: 8px; font-size: 11px; }
+  .hs-diary { top: 116px; right: 6px; width: calc(50vw - 12px); max-height: 20vh; padding: 8px; }
+  .hs-cameras { right: 6px; bottom: 8px; width: calc(100vw - 12px); gap: 4px; }
+  .hs-cameras canvas { max-height: 12vh; }
+  .hs-cameras small { float: none; margin-left: 4px; font-size: 8px; }
+  .hs-log { bottom: calc(24vh + 76px); left: 6px; width: min(320px, calc(100vw - 12px)); }
+  #hsLogList { max-height: 13vh; font-size: 11px; }
+}

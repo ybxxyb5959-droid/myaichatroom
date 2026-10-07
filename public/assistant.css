@@ -52,6 +52,9 @@ button:disabled { opacity: .5; cursor: default; }
 .sources .host { color: var(--faint); font-size: 11.5px; }
 .sys.k-cancel { color: var(--text); background: color-mix(in srgb, var(--warn) 14%, var(--panel)); }
 .sys.k-house-build { overflow-wrap: anywhere; }
+.sys.k-house-event { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; overflow-wrap: anywhere; }
+.house-event-link { border: 1px solid var(--accent); border-radius: 8px; padding: 4px 9px; color: var(--accent); background: transparent; font: inherit; cursor: pointer; }
+.house-event-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .err-kind { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 6px; padding: 0 6px; color: #fff; background: var(--err); margin-right: 2px; }
 .err-kind.k-capacity { background: #d97706; }
 .err-kind.k-quota { background: #9333ea; }
@@ -147,11 +150,6 @@ button:disabled { opacity: .5; cursor: default; }
 .chat-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; font-size: 11px; color: var(--muted); }
 .chat-actions button { padding: 2px 4px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; border-radius: 8px; }
 .chat-actions button:hover, .reaction-picker summary:hover { color: var(--accent); }
-.chat-actions .handoff { color: var(--accent); font-weight: 600; }
-.play-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.play-controls form { display: flex; gap: 6px; }
-.play-controls input { width: 9em; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; }
-.play-controls small { color: var(--muted); }
 .sys.k-digest { text-align: left; max-width: 520px; margin-inline: auto; }
 .sys.k-digest .text { font-size: 12.5px; }
 .sys.k-digest .model-pill { margin-top: 6px; }
@@ -161,19 +159,9 @@ button:disabled { opacity: .5; cursor: default; }
 .p-recent { margin-top: 10px; text-align: left; }
 .p-recent ul { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 3px; font-size: 12px; }
 .p-recent time { color: var(--muted); font-size: 11px; margin-right: 4px; }
-.feature-fold { margin: 2px 0 8px; font-size: 12px; }
-.feature-fold > summary { cursor: pointer; color: var(--muted); list-style: none; padding: 2px 0; user-select: none; }
-.feature-fold > summary::before { content: "▸ "; }
-.feature-fold[open] > summary::before { content: "▾ "; }
-.feature-fold > summary:hover { color: var(--accent); }
-.feature-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 2px 0 8px; font-size: 12px; }
-.feature { display: flex; align-items: center; gap: 5px; cursor: pointer; }
-.feature small { color: var(--muted); font-size: 10px; }
-.feature:last-child { grid-column: span 2; white-space: nowrap; }
 .at-me { color: var(--accent); font-weight: 700; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; padding: 0 2px; }
 .recipient-hint { min-height: 16px; padding: 0 6px 2px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recipient-hint.warn { color: var(--accent); font-weight: 600; }
-.run-handoff { margin: 4px 0 0 4px; }
 .reaction-picker { display: inline-block; }
 .reaction-picker summary { cursor: pointer; padding: 2px 4px; list-style: none; }
 .reaction-picker[open] { padding: 0 4px; border-radius: 8px; background: var(--panel-2); }

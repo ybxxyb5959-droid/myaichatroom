@@ -157,6 +157,13 @@ test('HTTP 무호출 대기, 선택/토론, 보안, 기존 기록 보존, 취소
   try {
     await new Promise((resolve) => setTimeout(resolve, 40)); assert.equal(calls, 0);
     assert.equal((await get('/')).status, 200);
+    for (const asset of ['/house-scene.mjs', '/house-view.mjs', '/vendor/three.module.js']) {
+      const response = await get(asset);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /javascript/);
+      assert.match(response.headers.get('content-security-policy'), /script-src 'self'/);
+    }
+    assert.equal((await get('/vendor/../package.json')).status, 404);
     const initial = await (await get('/api/state')).json();
     assert.equal(initial.room.discussion, false); assert.equal(initial.members.length, 3);
     assert.equal((await get('/world.html')).status, 404);
@@ -337,7 +344,7 @@ async function enableAuto(s, level = 'low') {
   await s.post('/api/room', { auto: { on: true, level } });
 }
 const baseTime = () => new Date(2026, 5, 10, 8, 0, 0).getTime();
-test('보통은 5~12분 간격에 4차례씩 대화하고 하루 30회에서 멈춘다', async () => {
+test('보통은 5~10분 간격에 4차례씩 대화하고 하루 30회에서 멈춘다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-medium-'));
   const clock = { t: baseTime() }; const adapter = autoAdapter();
   let s = await startAuto(root, adapter, clock);
@@ -345,8 +352,8 @@ test('보통은 5~12분 간격에 4차례씩 대화하고 하루 30회에서 멈
     await enableAuto(s, 'medium');
     clock.t += 20000; await s.app.tick();
     assert.equal(adapter.log.auto, 4);
-    // The harness's fixed random=.5 makes the 5–12 minute interval exactly 8.5 minutes.
-    clock.t += 8 * 60000; await s.app.tick();
+    // The harness's fixed random=.5 makes the 5–10 minute interval exactly 7.5 minutes.
+    clock.t += 7 * 60000; await s.app.tick();
     assert.equal(adapter.log.auto, 4);
     clock.t += 0.5 * 60000; await s.app.tick();
     assert.equal(adapter.log.auto, 8);

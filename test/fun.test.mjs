@@ -6,7 +6,6 @@ import path from 'node:path';
 import { House } from '../lib/house.mjs';
 import { enterLife, relationOf, RELATION_START, relationHint, eventChatter } from '../lib/life.mjs';
 import { chooseShare, captionFor, renderShare, seasonOf, SHARE_GAP } from '../lib/lifeshare.mjs';
-import { startGame, stepGame, joinGame, answerGame, userPrompt, USER_WAIT_MS, STEP_MS } from '../lib/play.mjs';
 import { buildNote, todayDigest, TODAY_QUESTION, noteScore } from '../lib/digest.mjs';
 import { AUTO_BRIEF } from '../lib/auto.mjs';
 import { createAssistantServer, loadConfig } from '../server.mjs';
@@ -58,45 +57,6 @@ test('real events are shared first and only once: reconciliation, house change, 
   assert.deepEqual([second.theme, second.actor, second.ref], ['done', 'claude', 'act:3']);
   const third = chooseShare({ house, entries, ids: IDS, now, rand: () => 0.1, last: { theme: 'done', refs: ['ev:7', 'act:3'] } });
   assert.ok(!['reconcile', 'done'].includes(third.theme));
-});
-
-test('a mini game finishes on its own, the owner can join and answer, and words are checked', () => {
-  const rand = seeded(21);
-  for (const kind of ['balance', 'quiz', 'riddle', 'chain']) {
-    const game = startGame({ kinds: [kind], players: IDS, rand, now: 0 });
-    let result = null, now = 0, lines = 0;
-    for (let i = 0; i < 30 && !result; i++) { now += STEP_MS; const step = stepGame(game, { names, rand, now }); lines += step.lines.length; result = step.result || null; }
-    assert.ok(result, `${kind} ends without the owner`);
-    assert.ok(game.done && lines >= 3);
-    assert.ok(Array.isArray(result.winners));
-  }
-  const quiz = startGame({ kinds: ['quiz'], players: IDS, rand: () => 0, now: 0 });
-  assert.deepEqual(userPrompt(quiz), { join: true });
-  joinGame(quiz);
-  assert.throws(() => answerGame(quiz, 0), /차례가 아니에요/, 'the question is not out yet');
-  stepGame(quiz, { names, rand: () => 0, now: 1 });
-  assert.deepEqual(userPrompt(quiz).choices, quiz.state.choices);
-  assert.throws(() => answerGame(quiz, 5), /보기를/);
-  answerGame(quiz, quiz.state.answer);
-  let out;
-  for (let i = 0; i < 5 && !out?.result; i++) out = stepGame(quiz, { names, rand: () => 0, now: 2 + i });
-  assert.ok(out.result.winners.includes('user'));
-  // A joined owner who stays silent only delays the end a little.
-  const silent = startGame({ kinds: ['balance'], players: IDS, rand: () => 0.3, now: 0 });
-  joinGame(silent);
-  let t = 0, end = null;
-  for (let i = 0; i < 10 && !end; i++) { t += 30000; end = stepGame(silent, { names, rand: () => 0.3, now: t }).result; }
-  assert.ok(end && t <= 4 * 30000 + USER_WAIT_MS);
-  const chain = startGame({ kinds: ['chain'], players: ['gpt', 'claude'], rand: () => 0, now: 0 });
-  joinGame(chain);
-  stepGame(chain, { names, rand: () => 0, now: 1 });
-  for (let i = 0; i < 4 && chain.turnOf !== 'user' && !chain.done; i++) stepGame(chain, { names, rand: () => 0, now: 2 + i });
-  if (!chain.done) {
-    const need = userPrompt(chain).word;
-    assert.throws(() => answerGame(chain, 'apple'), /한글/);
-    answerGame(chain, `${need}라`);
-    assert.equal(chain.userAnswer, `${need}라`);
-  }
 });
 
 test('helpful notes and the "what did you do today" list come from the activity log only', () => {
@@ -151,19 +111,17 @@ async function start(t, { clock, root, usage = null } = {}) {
   t.after(() => app.close());
   const url = `http://127.0.0.1:${app.server.address().port}`;
   const post = async (route, body) => (await fetch(url + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
-  return { app, calls: a.calls, post, root };
+  return { app, calls: a.calls, post, root, url };
 }
 const MIN = 60000, HOUR = 60 * MIN;
 
-test('shares follow the photo switch and the level cooldown, slow down when the user is away, and cost no call', async (t) => {
+test('shares are selected automatically, follow the level cooldown, slow down when the user is away, and cost no call', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, { clock });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, level: 'high', features: { talk: false, games: false, notes: false, photos: false } } });
+  await s.post('/api/room', { auto: { on: true, level: 'high' } });
   await s.post('/api/send', { text: '오늘 뭐 했어?' }); // the user is here (this question costs no call)
   clock.t += 30 * MIN;
-  assert.equal(s.app.funTick().share, undefined, 'photos off: no share');
-  await s.post('/api/room', { auto: { features: { photos: true } } });
   const first = s.app.funTick().share;
   assert.ok(first);
   const msg = s.app.store.messages.at(-1);
@@ -183,47 +141,39 @@ test('shares follow the photo switch and the level cooldown, slow down when the 
   assert.equal(s.calls.length, 0);
 });
 
-test('one game at a time plays itself to the end, the owner may join, and the result is recorded with a tiny relation change', async (t) => {
+test('automatic activity never starts a chat game and the removed game participation endpoints are unavailable', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const root = temp(t, 'fun-game-');
   const house = home(path.join(root, 'data', 'house.json')); enterLife(house, 1); house.save();
   const s = await start(t, { clock, root });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, level: 'high', features: { talk: false, photos: false, notes: false, house: false } } });
-  clock.t += 31 * MIN;
-  const out = s.app.funTick();
-  assert.ok(out.started);
-  const game = s.app.room.game;
-  assert.equal(s.app.view().room.game.prompt.join, true);
-  assert.equal(s.app.view().room.game.state, undefined, 'the answer is not sent to the browser');
-  const before = s.app.funTick();
-  assert.equal(before.started, undefined, 'never a second game while one runs');
-  assert.equal((await s.post('/api/game/join', { id: game.id })).room.game.joined, true);
-  for (let i = 0; i < 40 && s.app.room.game; i++) { clock.t += STEP_MS; s.app.funTick(); if (i === 3) clock.t += USER_WAIT_MS; }
-  assert.equal(s.app.room.game, null, 'finished without the owner answering');
-  const entries = s.app.activity.list({ kind: 'game' });
-  assert.ok(entries.some((e) => /시작/.test(e.text)) && entries.some((e) => /참여/.test(e.text)));
-  assert.ok(entries[0].ref.game === game.id);
-  const values = Object.values(s.app.house.s.relations);
-  assert.ok(values.every((v) => Math.abs(v - RELATION_START) <= 1), JSON.stringify(s.app.house.s.relations));
-  assert.ok(s.app.store.messages.filter((m) => m.play?.id === game.id).length >= 3);
-  await s.post('/api/room', { auto: { features: { games: false } } });
-  clock.t += 10 * HOUR;
-  assert.equal(s.app.funTick().started, undefined, 'games off: none starts');
+  await s.post('/api/room', { auto: { on: true, level: 'high' } });
+  for (let i = 0; i < 40; i++) {
+    clock.t += 31 * MIN;
+    const out = s.app.funTick();
+    assert.equal(out.started, undefined);
+    assert.equal(out.game, undefined);
+  }
+  assert.equal(s.app.view().room.game, undefined);
+  assert.equal(s.app.activity.list({ kind: 'game' }).length, 0);
+  assert.equal(s.app.store.messages.filter((m) => m.play || m.auto === 'game').length, 0);
+  for (const route of ['/api/game/join', '/api/game/answer']) {
+    const response = await fetch(s.url + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'old-game', choice: 0 }) });
+    assert.equal(response.status, 404);
+  }
   assert.equal(s.calls.length, 0);
 });
 
-test('a helpful memo appears only with the switch on and enough activity; "오늘 뭐 했어?" is answered without a call', async (t) => {
+test('a helpful memo is selected automatically only with enough activity; "오늘 뭐 했어?" is answered without a call', async (t) => {
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, { clock });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, features: { talk: false, photos: false, games: false, notes: false } } });
+  await s.post('/api/room', { auto: { on: true } });
+  clock.t += 2 * HOUR;
+  assert.equal(s.app.funTick().note, null, 'no meaningful activity: no memo');
   const add = (kind, actors, text) => s.app.activity.add({ kind, actors, text });
   add('task', ['claude'], '"로그인 오류 수정" 작업 완료');
   add('task', ['gpt'], '"집 생활" 작업 완료');
-  clock.t += 2 * HOUR;
-  assert.equal(s.app.funTick().note, undefined, 'memo switch off');
-  await s.post('/api/room', { auto: { features: { notes: true } } });
   clock.t += 31 * MIN;
   const note = s.app.funTick().note;
   assert.ok(note);
@@ -253,7 +203,7 @@ test('a Talk round carries at most two short lines about recent house events', a
   house.save();
   const s = await start(t, { clock, root });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, level: 'low', features: { photos: false, games: false, notes: false, house: false } } });
+  await s.post('/api/room', { auto: { on: true, level: 'low' } });
   clock.t += 30 * MIN; await s.app.tick();
   const talk = s.calls.filter((c) => c.auto);
   assert.equal(talk.length, 3, 'a round is still three turns at the quiet level');

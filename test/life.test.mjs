@@ -169,24 +169,16 @@ function homeRoot(t) {
   return root;
 }
 
-test('the server switches to life once, mirrors the workbench and records events without any AI call', async (t) => {
+test('the server switches to life once, mirrors member presence and records events without any AI call', async (t) => {
   const root = homeRoot(t);
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   let s = await start(t, root, { clock });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, level: 'high', features: { talk: false } } });
+  await s.post('/api/room', { auto: { on: true, level: 'high' } });
   s.app.lifeTick();
   assert.equal(s.app.house.s.phase, 'life');
   assert.equal(s.app.store.messages.filter((m) => /집이 기본적으로 완성됐어요/.test(m.text)).length, 1);
   assert.match(s.app.activity.list({ kind: 'house' })[0].text, /기본 집 완성/);
-  // The workbench says Claude is working: in the house Claude sits at the desk; afterwards it rests.
-  s.app.workbench.jobs.set('fake', { task: { working: ['claude'], current: { actor: 'claude' } }, project: { path: root } });
-  s.app.lifeTick();
-  assert.equal(s.app.house.s.agents.claude.doing, '💻 책상에서 작업 중');
-  assert.equal(s.app.view().members.find((m) => m.id === 'claude').activity.kind, 'work');
-  s.app.workbench.jobs.delete('fake');
-  s.app.lifeTick();
-  assert.match(s.app.house.s.agents.claude.doing, /^☕ 작업 끝나고 소파에서 쉬는 중$/);
   assert.equal(s.app.view().members.find((m) => m.id === 'claude').activity.text, s.app.house.s.agents.claude.doing, 'idle members show their house life');
   // A member switched off rests in the house.
   await s.post('/api/room', { enabled: { gemini: false } });
@@ -199,6 +191,11 @@ test('the server switches to life once, mirrors the workbench and records events
   const entry = s.app.activity.list({ kind: 'house' })[0];
   assert.equal(entry.ref.houseEvent, out.event.id);
   assert.equal(entry.text, out.event.text);
+  const notice = s.app.store.messages.find((m) => m.kind === 'house-event' && m.houseEvent.id === out.event.id);
+  assert.equal(notice.text, out.event.text);
+  assert.deepEqual(notice.houseEvent.actors, out.event.actors);
+  s.app.lifeTick();
+  assert.equal(s.app.store.messages.filter((m) => m.kind === 'house-event' && m.houseEvent.id === out.event.id).length, 1);
   assert.equal(s.calls.length, 0, 'life needs no AI call');
   await s.app.close();
   s = await start(t, root, { clock });
@@ -215,7 +212,7 @@ test('life beats and events follow the level cooldowns; a nearly-out AI starts n
     view: () => ({ claude: { ok: true, at: clock.t, windows: [{ id: '5h', usedPct: 95, remainingPct: 5 }] } }) };
   const s = await start(t, root, { clock, usage });
   await s.post('/api/check/login', {});
-  await s.post('/api/room', { auto: { on: true, level: 'high', features: { talk: false } } });
+  await s.post('/api/room', { auto: { on: true, level: 'high' } });
   s.app.lifeTick(); // enter life and mirror
   clock.t += 60000; assert.ok(s.app.lifeTick().beats.length, 'first beat');
   const [lo, hi] = LIFE_PACE.high;
@@ -223,8 +220,7 @@ test('life beats and events follow the level cooldowns; a nearly-out AI starts n
   clock.t += hi; assert.ok(s.app.lifeTick().beats.length);
   assert.ok(EVENT_GAP.low > EVENT_GAP.medium && EVENT_GAP.medium > EVENT_GAP.high);
   assert.ok(LIFE_PACE.low[0] > LIFE_PACE.medium[0] && LIFE_PACE.medium[0] > LIFE_PACE.high[0]);
-  // Talk on: a full round never picks Claude (5% left), and Claude still lives in the house.
-  await s.post('/api/room', { auto: { features: { talk: true } } });
+  // A full round never picks Claude (5% left), and Claude still lives in the house.
   clock.t += 60 * 60000; await s.app.tick();
   const talk = s.calls.filter((c) => c.auto);
   assert.ok(talk.length > 0);
@@ -237,7 +233,7 @@ test('the owner can answer, undo and change the house mode through the API; bad 
   const root = homeRoot(t);
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const s = await start(t, root, { clock });
-  await s.post('/api/room', { auto: { on: true, features: { talk: false } } });
+  await s.post('/api/room', { auto: { on: true } });
   s.app.lifeTick();
   assert.equal((await s.post('/api/house/decide', { choice: 'ai' })).error, '지금 정할 집 일이 없어요.');
   assert.equal((await s.post('/api/house/mode', { mode: 'chaos' })).error, '집 운영 방식을 확인하세요.');
@@ -246,6 +242,7 @@ test('the owner can answer, undo and change the house mode through the API; bad 
   const view = await s.post('/api/house/decide', { choice: 'owner', note: '벽 쪽으로' });
   assert.match(view.events.at(-1).text, /방장 의견\(“벽 쪽으로”\)/);
   assert.match(s.app.activity.list({ kind: 'house' })[0].text, /방장 의견/);
+  assert.match(s.app.store.messages.findLast((m) => m.kind === 'house-event').text, /방장 의견/);
   if (view.undo) {
     const back = await s.post('/api/house/undo', {});
     assert.equal(back.undo, null);

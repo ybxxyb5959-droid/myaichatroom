@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { House, parseHouseReply, HOUSE_LIMITS } from '../lib/house.mjs';
+import { House, parseHouseReply, HOUSE_LIMITS, SIZE } from '../lib/house.mjs';
 import { houseNoticeHTML } from '../public/format.mjs';
 
 const opts = { ids: ['claude', 'gpt', 'gemini'], names: { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' } };
@@ -32,7 +32,7 @@ test('floors, walls, doors and furniture are built from model replies and surviv
 test('invalid actions are refused without stopping the rest of the turn', () => {
   const house = make();
   const out = house.apply('gpt', { actions: [
-    { type: 'floor', x1: 0, z1: 0, x2: 30, z2: 3, color: 'wood' },        // outside the grid
+    { type: 'floor', x1: 0, z1: 0, x2: SIZE, z2: 3, color: 'wood' },      // outside the grid
     { type: 'floor', x1: 0, z1: 0, x2: 9, z2: 9, color: 'wood' },         // too many cells
     { type: 'floor', x1: 0, z1: 0, x2: 2, z2: 2, color: 'hotpink' },      // unknown colour
     { type: 'place', def: 'constructor', x: 1, z: 1 },                    // not a real design
