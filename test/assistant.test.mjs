@@ -174,14 +174,14 @@ test('HTTP 무호출 대기, 선택/토론, 보안, 기존 기록 보존, 취소
     await post('/api/room', { selected: 'gpt', targeted: true, models: { gpt: { model: 'gpt-test', effort: 'high' } } });
     assert.equal((await post('/api/send', { text: '질문' })).status, 200);
     if (app.active) await app.active.done;
-    assert.equal(calls, 1);
+    assert.equal(calls, 3); // Work requests involve every available participant.
     await post('/api/room', { discussion: true });
     await post('/api/send', { text: '토론 질문' });
     if (app.active) await app.active.done;
-    assert.equal(calls, 8);
+    assert.equal(calls, 10);
     const before = app.store.messages.length;
     await new Promise((resolve) => setTimeout(resolve, 40));
-    assert.equal(calls, 8); assert.equal(app.store.messages.length, before);
+    assert.equal(calls, 10); assert.equal(app.store.messages.length, before);
     wait = true; await post('/api/send', { text: '중지할 질문' });
     assert.equal((await post('/api/send', { text: '중복' })).status, 409);
     assert.equal((await post('/api/cancel', {})).status, 200);
@@ -941,9 +941,15 @@ test('@ 이름은 문장 어디에 있어도 인식하고, 모르는 이름이�
   assert.deepEqual(mentionedTargets('문의: me@gemini.com @grok 안녕'), []);
   assert.deepEqual(mentionedTargets('그냥 질문'), []);
 });
-test('기본은 켜져 있는 AI 모두가 각자 답하고, @와 특정 AI 스위치는 한 명만 부른다', async () => {
+test('작업은 모두 답하고, 잡담의 @와 특정 AI 스위치는 지정한 상대를 부른다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-who-'));
   const adapter = fakeAdapter(); // claude and gpt are connected, gemini is not
+  let kind = '작업';
+  const originalChat = adapter.chat;
+  adapter.chat = async (...args) => {
+    const result = await originalChat(...args);
+    return { ...result, text: `${result.text}\n[대화유형] ${kind}` };
+  };
   const s = await start(root, adapter);
   const ask = async (text) => {
     const before = adapter.log.chat.length;
@@ -954,10 +960,11 @@ test('기본은 켜져 있는 AI 모두가 각자 답하고, @와 특정 AI 스�
   try {
     const all = await ask('안녕');
     assert.equal(all.res.status, 200); assert.deepEqual(all.calls.map((c) => c.id).sort(), ['claude', 'gpt']);
-    assert.ok(all.calls.every((c) => c.prompt.includes('다른 AI에게도')));
+    assert.ok(all.calls.every((c) => c.prompt.includes('안녕')));
     assert.ok(!s.app.store.messages.some((m) => m.kind === 'complete')); // no closing note for a plain answer
     assert.deepEqual(s.app.store.messages.filter((m) => m.from !== 'user').map((m) => m.from).sort(), ['claude', 'gpt']);
 
+    kind = '잡담';
     const one = await ask('이건 @지피티 가 답해줘');
     assert.deepEqual(one.calls.map((c) => c.id), ['gpt']); assert.ok(!one.calls[0].prompt.includes('다른 AI에게도'));
     assert.equal((await ask('@gemini 안녕')).res.status, 400); // not connected: nobody answers instead

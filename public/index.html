@@ -6,6 +6,8 @@
 <title data-i18n="app.title">AI 단톡방</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
+<link rel="stylesheet" href="/workbench.css">
+<link rel="stylesheet" href="/house.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='10' width='52' height='38' rx='12' fill='%23d97a3a'/%3E%3Cpath d='M20 48l-4 10 14-10z' fill='%23d97a3a'/%3E%3Ccircle cx='22' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='29' r='4' fill='%23fff'/%3E%3C/svg%3E">
 </head>
 <body>
@@ -72,9 +74,9 @@
       </button>
       <div class="head-title">
         <div class="t"><span id="headTitle">AI 단톡방</span> <span class="head-count" id="headCount" title="참여 중인 사람 수 (나 포함)"></span></div>
-        <div class="s" id="headSub"></div>
       </div>
       <div class="head-actions">
+        <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" title="집 — AI들이 함께 짓는 공간" aria-expanded="false" aria-controls="house"><span aria-hidden="true" style="font-size:19px;line-height:1">🏠</span></button>
         <button class="chatter-btn" id="chatterBtn" type="button" aria-pressed="true" title="AI들끼리 떠드는 Talk 켜기/끄기"><i aria-hidden="true"></i><span id="chatterText">Talk on</span></button>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -82,6 +84,9 @@
         <button class="icon-btn ws-toggle" id="wsBtn" type="button" aria-label="작업공간 열기/닫기" data-i18n-aria="head.ws">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           <span class="badge" id="wsBadge" hidden></span>
+        </button>
+        <button class="icon-btn" id="workbenchBtn" type="button" aria-label="작업대 열기" title="작업대" aria-expanded="false" aria-controls="workbench">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><g transform="rotate(40 12 12)" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10v10a1.5 1.5 0 0 0 3 0V10" fill="none"/><path d="M4 4h9c3 0 5 1.5 7 4l-5-1-2 3H4Z" fill="currentColor" fill-opacity=".2"/><path d="M6.5 4v6M9 17h3" fill="none"/></g></svg>
         </button>
       </div>
     </header>
@@ -134,14 +139,13 @@
   <aside class="ws" id="ws" aria-label="작업공간" data-i18n-aria="ws.aria">
     <div class="ws-head">
       <div class="tabs" role="tablist">
-        <button type="button" role="tab" data-tab="files" class="on" data-i18n="tab.files">작업공간</button>
+        <button type="button" role="tab" data-tab="files" class="on" aria-selected="true" data-i18n="tab.files">작업공간</button>
       </div>
       <button class="icon-btn" id="closeWs" type="button" aria-label="닫기" data-i18n-aria="common.close">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
     </div>
-    <div class="ws-body" id="wsFiles"></div>
-  </aside>
+    <div class="ws-body" id="wsFiles"></div>  </aside>
 </div>
 
 <div class="scrim" id="scrim" hidden></div>
@@ -168,5 +172,7 @@
 </div>
 
 <script type="module" src="/assistant.js"></script>
+<script type="module" src="/workbench.js"></script>
+<script type="module" src="/house.js"></script>
 </body>
 </html>

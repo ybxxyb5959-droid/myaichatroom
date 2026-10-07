@@ -16,6 +16,10 @@ import { LIMITS, LEVELS, DEFAULT_LEVEL, freshUsage, usageFor, redact, pickScript
 import { ACTIVITY_LIMITS, ACTIVITY_PROMPT, parseActivity, postcard } from './lib/activities.mjs';
 import { GAME_LIMITS, GAME_CSP, GAME_BRIEF, gamePrompt, parseDraft, applyGamePatches, gameDocument } from './lib/game.mjs';
 import { checkGame } from './lib/gamecheck.mjs';
+import { EMOJIS, BIO_INTERVAL } from './lib/social.mjs';
+import { latestCall } from './public/status.mjs';
+import { Workbench } from './lib/workbench.mjs';
+import { House, HOUSE_BRIEF, parseHouseReply } from './lib/house.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -147,6 +151,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     // Each AI's own short memo (speech style, how it calls people, relations). It writes it itself.
     // bios: the one-line intro each AI shows on its profile (written by the AI itself, like a status message).
     bios: Object.fromEntries(IDS.map((id) => [id, typeof preferences.bios?.[id] === 'string' ? cleanBio(preferences.bios[id]) : ''])),
+    bioChangedAt: { ...preferences.bioChangedAt },
+    reactionAt: { ...preferences.reactionAt },
     memoOn: preferences.memoOn !== false,
     memos: Object.fromEntries(IDS.map((id) => [id, typeof preferences.memos?.[id] === 'string' ? cleanMemo(preferences.memos[id]) : ''])),
     // on: the room power button (off until pressed). level: 낮음/중간/높음 → effort, pace, daily limit.
@@ -162,8 +168,20 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     modelCache,
   };
   const checking = new Map();
+  const connected = (id) => {
+    const check = room.checks[id];
+    const call = latestCall(check);
+    if (!available[id] || check.login?.status === 'fail' || (call?.status === 'fail' && call.kind === 'auth')) return false;
+    return check.login?.status === 'ok' || call?.status === 'ok';
+  };
+  const changeBio = (id, bio) => {
+    if (!bio || bio === room.bios[id]) return;
+    if (room.bios[id] && (clock() - (room.bioChangedAt[id] || 0) < BIO_INTERVAL || random() >= 0.08)) return;
+    room.bios[id] = bio; room.bioChangedAt[id] = clock(); persist();
+  };
   let active = null;
   let autoJob = null;
+  let houseJob = null;
   const memberReturns = new Map();
   const persist = () => { store.state.assistant = structuredClone(room); store.saveState(); };
   const recordSuccess = (message) => {
@@ -199,10 +217,21 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     [room.models[id].model, room.debateModels[id].model].forEach((m) => add(m, 'custom'));
     return [id, {
       available: !!available[id],
+      connected: connected(id),
       listedAt: id === 'gpt' ? modelCache.gpt?.at || null : null,
       models: list.map((m) => ({ ...m, efforts: effortsFor(id, m.id, modelCache.gpt) || [], check: room.checks[id].models[m.id] || null })),
     }];
   }));
+  const workbench = new Workbench({
+    root, adapter, catalog,
+    defaults: () => ({
+      gpt: { model: 'gpt-6.1-sol', effort: 'medium' },
+      claude: { model: 'claude-opus-5-5', effort: 'medium' },
+      gemini: structuredClone(room.models.gemini),
+    }),
+    settings: (id, value, fallback) => settingsOf(id, value, fallback, modelCache.gpt),
+    onChange: () => broadcast('workbench', {}),
+  });
   const view = () => ({
     room: { ...room, modelCache: undefined, name: room.roomName, userName: room.userName, checking: [...checking.keys()],
       active: active ? { id: active.id, mode: active.mode, states: active.states, calls: active.calls, synthesizer: active.synthesizer, models: active.models } : null,
@@ -296,15 +325,15 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const job = { id: runId, controller: new AbortController(), states: {}, calls: 0, mode,
       synthesizer: request.discussion ? request.synthesizer : null,
       models: Object.fromEntries(request.participants.map((id) => [id, request.models[id]])) };
-    for (const id of request.participants) job.states[id] = { phase: request.discussion ? 'opinion' : 'answer', status: '대기' };
+    if (request.discussion) for (const id of request.participants) job.states[id] = { phase: 'opinion', status: '대기' };
     for (const { id, reason } of request.excluded) job.states[id] = { phase: '', status: '제외', reason };
     active = job;
     publish();
     const history = store.recent(40).filter((m) => m.from !== 'system' && m.auto !== 'ambient' && !m.phase?.match(/opinion|review/))
-      .map((m) => `${m.from === 'user' ? room.userName : m.from}: ${m.text}`).join('\n').slice(-18000);
+      .map((m) => `[${m.id}] ${m.from === 'user' ? room.userName : m.from}${m.replyTo ? ` → 답장 #${m.replyTo}` : ''}: ${m.text}`).join('\n').slice(-18000);
     job.done = discuss({
       adapter, request, history, signal: job.controller.signal,
-      canCall: (id) => room.enabled[id] && !room.quotaRest[id],
+      canCall: (id) => room.enabled[id] && available[id] && !room.quotaRest[id] && room.checks[id].login?.status !== 'fail',
       onState: ({ phase, id, status, kind, calls }) => {
         job.calls = calls;
         job.states[id] = { phase, status, kind };
@@ -315,12 +344,49 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         }
         publish();
       },
-      onMessage: (m) => post({ ...m, runId: job.id, mode }),
+      onMessage: (m) => {
+        const target = store.byId.get(m.replyTo);
+        return post({ ...m, replyPreview: target ? { from: target.from, text: target.text.slice(0, 180) } : undefined, runId: job.id, mode });
+      },
       onLog: (id, text) => store.log(id, redact(text)),
       onMemo: (id, memo) => { room.memos[id] = memo; persist(); },
-      onBio: (id, bio) => { room.bios[id] = bio; persist(); publish(); },
-    }).then((result) => {
+      onBio: (id, bio) => { changeBio(id, bio); publish(); },
+      onReaction: (id, reaction) => {
+        const target = store.byId.get(reaction.id);
+        if (!target || target.from === id || target.from === 'system' || clock() - (room.reactionAt[id] || 0) < 5 * 60000 || random() >= 0.2) return;
+        if (store.applyReaction(target.id, id, reaction.emoji)) {
+          room.reactionAt[id] = clock(); persist(); publish();
+        }
+      },
+      onImageRequest: (id, prompt) => { request.imageRequest ??= { id, prompt }; },
+    }).then(async (result) => {
       if (job.controller.signal.aborted) return;
+      if (request.imageRequest) {
+        const { id: planner, prompt } = request.imageRequest;
+        const maker = [planner, ...IDS].find((id) => ['gpt', 'gemini'].includes(id)
+          && connected(id) && room.enabled[id] && !room.quotaRest[id]);
+        if (!maker || cfg.imageGen === false) {
+          post({ from: 'system', kind: 'error', runId, text: '이미지를 제작할 수 있는 GPT 또는 Gemini 연결이 필요합니다. 이미지 생성 설정도 확인해 주세요.' });
+        } else {
+          job.states[maker] = { phase: 'answer', status: '생성 중' }; job.calls++; publish();
+          try {
+            const generated = await adapter.image(maker, prompt, { signal: job.controller.signal, refSheet: request.images?.[0] });
+            if (job.controller.signal.aborted) return;
+            if (!generated.ok || !generated.file) throw new Error(generated.detail || '이미지 생성 실패');
+            if (fs.statSync(generated.file).size > 2 * 1024 * 1024) throw new Error('생성된 사진이 2MB를 넘습니다.');
+            const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[path.extname(generated.file).toLowerCase()];
+            const rel = saveImage(store, { mime, data: fs.readFileSync(generated.file).toString('base64') });
+            post({ from: maker, runId, replyTo: request.messageId, text: `기획 ${nameOf(planner)} · 이미지 생성 ${nameOf(maker)}`,
+              attach: { path: rel, generated: true, label: `이미지 생성 ${nameOf(maker)}` } });
+            job.states[maker] = { phase: 'answer', status: '완료' };
+          } catch (e) {
+            if (job.controller.signal.aborted) return;
+            job.states[maker] = { phase: 'answer', status: '실패' };
+            post({ from: 'system', kind: 'error', runId, text: '이미지를 생성하지 못했습니다.', detail: e.message });
+          }
+          publish();
+        }
+      }
       // A plain answer needs no closing note unless something failed or someone was left out.
       if (mode === 'answer' && result.ok && !result.failed.length && !request.excluded.length) return;
       const parts = [result.ok ? '완료' : '답변을 완료하지 못했습니다'];
@@ -551,7 +617,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           return;
         }
         if (split.memo && room.memoOn) { room.memos[id] = split.memo; persist(); }
-        if (split.bio && room.memoOn) { room.bios[id] = split.bio; persist(); }
+        if (split.bio && room.memoOn) changeBio(id, split.bio);
         let artifact;
         if (parsed?.activity?.kind === 'game') {
           post({ from: id, text, auto: 'call', model: settings.model, effort: settings.effort || '' });
@@ -599,6 +665,43 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const next = Math.min(real, chat);
     return Number.isFinite(next) ? next : null;
   }
+  // ---------- the house: members build it slowly, one short turn at a time, only while Talk is on ----------
+  const MIN = 60000;
+  const HOUSE_PACE = { low: { gap: [30 * MIN, 60 * MIN], daily: 3 }, medium: { gap: [6 * MIN, 12 * MIN], daily: 20 }, high: { gap: [4 * MIN, 8 * MIN], daily: 16 } };
+  const house = new House(path.join(root, 'data', 'house.json'), { ids: IDS, names: Object.fromEntries(IDS.map((id) => [id, nameOf(id)])) });
+  let houseAt = clock() + MIN; // after a restart the unfinished work resumes soon (if Talk is on)
+  async function houseTurn() {
+    const now = clock();
+    if (houseJob || now < houseAt || !room.auto.on || autoSleeping() || active || autoJob) return;
+    const pace = HOUSE_PACE[room.auto.level];
+    const usage = usageFor(room.auto, now);
+    const order = IDS.filter((id) => eligibleAuto().includes(id));
+    if (!order.length || usage.stopped || usage.calls >= LEVELS[room.auto.level].daily || (usage.house || 0) >= pace.daily) return;
+    const id = order[(order.indexOf(house.s.lastActor) + 1) % order.length];
+    const job = { controller: new AbortController() };
+    houseJob = job;
+    usage.house = (usage.house || 0) + 1; usage.calls++; persist(); // counted before the call, so a stopped call still counts
+    houseAt = now + between(pace.gap);
+    try {
+      const settings = autoSettings(id);
+      const result = await adapter.chat(id, HOUSE_BRIEF, house.prompt(id, { resumedAfterMs: house.s.lastTurnAt ? now - house.s.lastTurnAt : 0 }),
+        { settings, independent: true, webSearch: false, signal: job.controller.signal, timeoutMs: LIMITS.callTimeoutMs * 2 });
+      if (job.controller.signal.aborted || !room.auto.on || autoSleeping()) return;
+      const reply = result.ok ? parseHouseReply(result.text) : null;
+      if (!reply) {
+        const detail = redact(result.detail || 'AI가 집 작업 JSON을 반환하지 않았습니다.').split('\n').map((l) => l.trim()).filter(Boolean).slice(-2).join(' ').slice(-400);
+        store.log(id, `house ${detail}`);
+        if (errorKind(detail) === 'quota') restForQuota(id);
+        return;
+      }
+      house.apply(id, reply, clock());
+      broadcast('house', {});
+    } catch (e) { store.log('house', redact(e.message)); }
+    finally { houseJob = null; persist(); publish(); }
+  }
+  const houseView = () => ({ ...house.view(), talk: room.auto.on && !autoSleeping(), level: room.auto.level, nextAt: houseAt, busy: !!houseJob, names: Object.fromEntries(IDS.map((id) => [id, nameOf(id)])), userName: room.userName });
+  const houseTimer = setInterval(() => { houseTurn().catch((e) => store.log('house', redact(e.message))); }, autoTickMs);
+  houseTimer.unref?.();
   // ---------- welcoming the user ----------
   const RETURN_MS = 60 * 60000; // a visit after this long without the user counts as coming back
   function lastUserTs() {
@@ -658,7 +761,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (action) { persist(); publish(); }
     return action;
   }
-  const stopAuto = async () => { if (autoJob) { autoJob.controller.abort(); await autoJob.done; } };
+  const stopAuto = async () => { houseJob?.controller.abort(); if (autoJob) { autoJob.controller.abort(); await autoJob.done; } };
   const autoTimer = setInterval(() => { autoTick().catch((e) => store.log('auto', redact(e.message))); }, autoTickMs);
   autoTimer.unref?.();
   async function refreshModels(id) {
@@ -686,6 +789,10 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (!trusted(req)) return json(res, 403, { error: '로컬 접속만 허용합니다.' });
       const url = new URL(req.url, 'http://localhost');
       const p = decodeURIComponent(url.pathname);
+      if (p === '/api/workbench' || p.startsWith('/api/workbench/')) {
+        const body = req.method === 'POST' ? await bodyOf(req) : {};
+        return json(res, 200, await workbench.handle(req.method, url, body));
+      }
       if (req.method === 'GET' && p === '/events') {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
         res.write('retry: 2000\n\n');
@@ -696,6 +803,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         return;
       }
       if (req.method === 'GET' && p === '/api/state') return json(res, 200, view());
+      if (req.method === 'GET' && p === '/api/house') return json(res, 200, houseView());
       if (req.method === 'GET' && p === '/api/models') return json(res, 200, catalog());
       if (req.method === 'GET' && p === '/api/file') {
         const file = store.readFile(url.searchParams.get('path'));
@@ -769,7 +877,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
             if (auto.sleepMinutes !== undefined) room.auto.sleepMinutes = auto.sleepMinutes;
             if (typeof auto.on === 'boolean') {
               // Turning it on starts the first round soon, so the user sees it work.
-              if (auto.on && !room.auto.on) { room.auto.lastWakeAt = clock(); sched.callAt = clock() + 10000; sched.chatterAt = clock() + 5 * 60000; }
+              if (auto.on && !room.auto.on) { room.auto.lastWakeAt = clock(); sched.callAt = clock() + 10000; sched.chatterAt = clock() + 5 * 60000; houseAt = Math.min(houseAt, clock() + MIN); }
               room.auto.on = auto.on;
               if (!auto.on) await stopAuto();
             }
@@ -827,19 +935,30 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           persist(); publish();
           return json(res, 200, view());
         }
+        if (p === '/api/react') {
+          const target = store.byId.get(body.id);
+          if (!target || target.from === 'system' || !EMOJIS.includes(body.emoji)) return json(res, 400, { error: '공감할 메시지와 반응을 확인하세요.' });
+          store.applyReaction(target.id, 'user', body.emoji);
+          publish();
+          return json(res, 200, { ok: true });
+        }
         if (p === '/api/send') {
           // The user comes first: stop any auto call, drop its answer, and pause auto chat.
           sched.lastUserAt = clock();
           await stopAuto();
           if (active) return json(res, 409, { error: '현재 답변을 기다리거나 중지한 뒤 보내세요.' });
           const text = String(body.text || '').trim();
+          const reply = body.replyTo == null ? null : store.byId.get(body.replyTo);
+          if (body.replyTo != null && (!reply || reply.from === 'system')) return json(res, 400, { error: '답장할 메시지가 없습니다.' });
           if ((!text && !body.image) || text.length > 20000) return json(res, 400, { error: '질문을 입력하세요. 최대 20,000자입니다.' });
           // Who answers: AIs named with @ (only them, even in discussion), else the discussion group,
           // else the selected AI when "특정 AI" is on, else every AI that is on and connected.
           const named = mentionedTargets(text);
+          if (!named.length && IDS.includes(reply?.from)) named.push(reply.from);
           const discussion = room.discussion && !named.length;
           const wanted = named.length ? named : discussion ? IDS : room.targeted ? [room.selected] : IDS;
-          const participants = wanted.filter((id) => room.enabled[id] && available[id]);
+          const peerIds = IDS.filter((id) => room.enabled[id] && available[id] && !room.quotaRest[id] && room.checks[id].login?.status !== 'fail');
+          const participants = wanted.filter((id) => peerIds.includes(id));
           if (!participants.length) return json(res, 400, { error: '답할 수 있는 AI가 없습니다. 연결 설정을 확인하거나 쉬는 중인 AI를 켜 주세요.' });
           let attach;
           if (body.image) attach = { path: saveImage(store, body.image), upload: true };
@@ -848,9 +967,13 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           const excluded = named.length || discussion || room.targeted ? wanted.filter((id) => !participants.includes(id))
             .map((id) => ({ id, reason: room.quotaRest[id] ? '한도 휴식' : room.enabled[id] ? '연결 설정 필요' : '쉬는 중' })) : [];
           const runId = crypto.randomUUID();
-          const msg = post({ from: 'user', text, attach });
+          const msg = post({ from: 'user', text, attach, replyTo: reply?.id,
+            replyPreview: reply ? { from: reply.from, text: reply.text.slice(0, 180) } : undefined });
           begin({ ...structuredClone(room), discussion, models: structuredClone(discussion ? room.debateModels : room.models),
-            text: text || '첨부한 사진을 살펴봐 주세요.', participants, excluded,
+            text: (reply ? `답장 대상 [${reply.id}] ${reply.from}: ${reply.text}\n\n` : '') + (text || '첨부한 사진을 살펴봐 주세요.'),
+            messageId: msg.id, participants, peerIds, excluded,
+            chatParticipants: !discussion && !named.length && !room.targeted && !attach
+              ? shuffled(participants).slice(0, 1 + Math.floor(random() * participants.length)) : undefined,
             images: attach ? [store.abs(attach.path)] : [] }, runId);
           return json(res, 200, { ok: true, msg });
         }
@@ -860,7 +983,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (p.startsWith('/ws/')) return await serve(res, store.abs(store.safeRel(p.slice(4))), true);
       const rel = p === '/' ? 'index.html' : p.slice(1);
       // Only current UI assets are served. Old game and developer pages are disabled.
-      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css'].includes(rel)
+      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css', 'workbench.js', 'workbench.css', 'house.js', 'house.css', 'house-shape.mjs'].includes(rel)
         && !/^avatars\/(?:(claude|gpt|gemini)(?:(-128)?\.webp|-pixel(-128)?\.png))$/.test(rel)) return json(res, 404, { error: '파일이 없습니다.' });
       return await serve(res, path.join(ROOT, 'public', rel));
     } catch (e) {
@@ -872,11 +995,13 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     const job = active;
     clearInterval(autoTimer);
     clearInterval(usageTimer);
+    clearInterval(houseTimer);
     for (const timer of timers) clearTimeout(timer);
     job?.controller.abort();
     for (const controller of checking.values()) controller.abort();
     await stopAuto();
     if (job) await job.done;
+    await workbench.close();
     for (const client of clients) client.end();
     server.closeAllConnections();
     if (server.listening) await new Promise((resolve) => server.close(resolve));
@@ -888,7 +1013,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     };
     pollUsage();
   }
-  return { server, close, store, view, tick: autoTick, get active() { return active; } };
+  return { server, close, store, view, workbench, tick: autoTick, get active() { return active; } };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

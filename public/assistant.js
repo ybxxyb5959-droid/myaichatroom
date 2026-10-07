@@ -27,11 +27,11 @@ const EXAMPLES = [
 // The usage tour: one spotlight per control, in the order a new user needs them. Plain words, no jargon.
 const TOUR = [
   { title: '어서 와요!' },
-  { sel: '#input', title: '말 걸어 보기', text: '여기에 채팅을 입력하면 연결된 AI들이 모두 답해 줘요. 줄을 바꾸려면 Shift+Enter를 눌러요. @를 치면 언급할 AI를 고를 수 있어요.' },
+  { sel: '#input', title: '말 걸어 보기', text: '수다에는 가끔씩 참여하고, 조사·이미지 같은 작업 요청에는 연결된 AI들이 모두 반응해요. Shift+Enter로 줄을 바꾸고, @로 멘션할 수 있어요.' },
   { sel: '#members', side: true, title: 'AI 친구들', text: '왼쪽에 AI들이 있어요.  남은 한도와 연결상태를 확인 할 수 있어요.' },
   { sel: '#members .switch', side: true, title: '참여 스위치', text: '참여를 끄면 AI는 쉬어요. 사용량을 아끼고 싶을 때 써 보세요. 다시 켜면 돌아와요.' },
   { sel: '#modelPicker', title: '누가 답할지, 어떤 모델인지', text: '활성된 AI 모두가 답해요. AI들의 “모델”을 바꿀 수 있어요. 사용량에 따라 조절해보세요.' },
-  { sel: '#targetSwitch', title: '한 명에게만 묻기', text: '특정 AI 한 명에게만 물어봐요. 입력창에 @클로드 처럼 언급도 OK !' },
+  { sel: '#targetSwitch', title: '먼저 답할 상대 고르기', text: '잡담은 선택한 상대가 답해요. 조사·이미지 같은 작업에는 다른 연결된 AI도 함께 반응해요. @클로드 처럼 언급해도 돼요.' },
   { sel: '#debateSwitch', title: '토론 모드', text: '중요한 결정을 할때, AI들이 각자 의견을 내고, 서로 검토한 뒤, 하나의 결론으로 정리해 줘요. 시간이 더 걸리고 한도소모가 클 수 있어요.' },
   { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 AI들이 알아서 서로 수다를 떨어요. 내가 말을 걸면 바로 멈추고 먼저 답해요. 앱이 꺼져 있을 땐 아무것도 하지 않아요.' },
   { sel: '#levelSeg', side: true, title: '얼마나 떠들까', text: ' AI끼리의 대화 빈도를 정해요. 높을수록 자주 떠들고 사용량도 늘어요.' },
@@ -47,6 +47,12 @@ let menu = null; // compact model menu: { sub, q, adding, addId }
 let setup = null; // first-start guide draft
 let tour = null;
 let renderedKey = '';
+let replyTo = null;
+const replyChip = document.createElement('button');
+replyChip.type = 'button'; replyChip.className = 'reply-quote'; replyChip.hidden = true;
+replyChip.setAttribute('aria-label', '답장 취소');
+const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id]);
+const wave = (text) => `<span class="typing-wave" aria-label="${esc(text)}">${[...text].map((c, i) => `<span aria-hidden="true" style="--i:${i}">${esc(c)}</span>`).join('')}</span>`;
 const runOpen = new Map(); // discussion runs the user opened or closed by hand
 const input = $('#input');
 const tl = $('#timeline');
@@ -70,7 +76,7 @@ async function update(body) {
   try { applyState(await api('/api/room', body)); return true; } catch (e) { toast(e.message); renderControls(); return false; }
 }
 const member = (id) => state.members.find((m) => m.id === id);
-const nameOf = (id) => member(id)?.name || id;
+const nameOf = (id) => id === 'user' ? state?.room.userName || '방장' : member(id)?.name || id;
 const avatar = (id, cls = 'mini-av') => `<img class="${cls}" src="/avatars/${id}-pixel-128.png" alt="">`;
 const settingText = (s) => `${s.model}${s.effort ? ` · ${s.effort}` : ''}`;
 const kindText = (kind) => state.kinds[kind] || state.kinds.unknown;
@@ -134,6 +140,36 @@ function messageNode(m) {
   node.innerHTML = `${face}<div class="m-body">
     <div class="m-head"><span class="n">${esc(who?.name || m.from)}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${phase}</div>
     <div class="line"><div class="bubble"><div class="text">${bodyHTML(m)}</div>${attachment}${game}${sources}</div></div></div>`;
+  const bubble = node.querySelector('.bubble');
+  if (m.replyPreview) {
+    const quote = document.createElement('button');
+    quote.type = 'button'; quote.className = 'reply-quote';
+    quote.textContent = `${nameOf(m.replyPreview.from)}에게 답장 · ${m.replyPreview.text}`;
+    quote.onclick = () => document.querySelector(`[data-id="${Number(m.replyTo)}"]`)?.scrollIntoView({ block: 'center' });
+    bubble.prepend(quote);
+  }
+  const actions = document.createElement('div'); actions.className = 'chat-actions';
+  const answer = document.createElement('button'); answer.type = 'button'; answer.textContent = '답장';
+  answer.onclick = () => {
+    replyTo = m.id; replyChip.textContent = `${nameOf(m.from)}에게 답장 · ${(m.text || '').slice(0, 100)} ×`;
+    replyChip.hidden = false; input.before(replyChip); input.focus();
+  };
+  actions.append(answer);
+  const picker = document.createElement('details'); picker.className = 'reaction-picker';
+  const summary = document.createElement('summary'); summary.textContent = '공감';
+  picker.append(summary); actions.append(picker);
+  for (const emoji of ['❤️', '👍', '😂', '😮', '😢', '😡']) {
+    const people = m.reactions?.[emoji] || [];
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = `${emoji}${people.length ? ` ${people.length}` : ''}`;
+    button.title = people.length ? people.map(nameOf).join(', ') : `${emoji} 공감`;
+    button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(people.includes('user')));
+    button.onclick = async () => {
+      try { await api('/api/react', { id: m.id, emoji }); } catch (e) { toast(e.message); }
+    };
+    (people.length ? actions : picker).append(button);
+  }
+  node.querySelector('.m-body').append(actions);
   if (who) node.style.setProperty('--c', who.color);
   node.querySelector('[data-game]')?.addEventListener('click', () => {
     setWorkspaceOpen(true);
@@ -195,7 +231,7 @@ function renderMessages() {
   }
   $('#msgs').replaceChildren(...items.map((x) => (x.msgs ? runNode(x) : messageNode(x))));
   $('#empty').hidden = state.messages.some((m) => m.from !== 'system');
-  renderedKey = `${state.messages.length}:${state.messages.at(-1)?.id}:${state.room.active?.id || ''}`;
+  renderedKey = messageKey();
 }
 const distance = () => tl.scrollHeight - tl.scrollTop - tl.clientHeight;
 function showJump(text) { $('#jump').textContent = text; $('#jump').hidden = false; }
@@ -208,7 +244,7 @@ function refreshMessages(grew) {
 function applyState(next) {
   const before = state?.messages.length || 0;
   state = next;
-  const key = `${state.messages.length}:${state.messages.at(-1)?.id}:${state.room.active?.id || ''}`;
+  const key = messageKey();
   if (key !== renderedKey) refreshMessages(state.messages.length > before);
   renderControls();
   renderFiles();
@@ -229,7 +265,7 @@ function renderProgress() {
   box.classList.toggle('on', !!a);
   if (!a) { box.replaceChildren(); return; }
   const entries = Object.entries(a.states);
-  const chips = entries.map(([id, s]) => `<span class="pg-ai ${stateClass(s)}" style="--c:${member(id).color}">${avatar(id)}<b>${esc(nameOf(id))}</b> ${esc(s.status)}${s.kind ? ` · ${esc(kindText(s.kind))}` : ''}${s.reason ? ` · ${esc(s.reason)}` : ''}${a.synthesizer === id ? ' <em>종합</em>' : ''}</span>`).join('');
+  const chips = entries.map(([id, s]) => `<span class="pg-ai ${stateClass(s)} ${a.mode === 'discussion' && s.phase === 'review' ? 'debating' : ''}" style="--c:${member(id).color}">${avatar(id)}<b>${esc(nameOf(id))}</b> ${s.status === '생성 중' ? wave(a.mode === 'discussion' && s.phase === 'review' ? '토론하는 중...' : '입력중...') : esc(s.status)}${s.kind ? ` · ${esc(kindText(s.kind))}` : ''}${s.reason ? ` · ${esc(s.reason)}` : ''}${a.synthesizer === id ? ' <em>종합</em>' : ''}</span>`).join('');
   if (a.mode === 'discussion') {
     const joined = entries.filter(([, s]) => s.status !== '제외').length;
     const reached = Math.max(0, ...entries.filter(([, s]) => !['대기', '제외'].includes(s.status)).map(([, s]) => STEPS.indexOf(s.phase)));
@@ -241,7 +277,7 @@ function renderProgress() {
 }
 function renderRoomSub() {
   const room = state.room;
-  $('#roomSub').textContent = room.active || pending ? '답변 중'
+  $('#roomSub').textContent = room.active || pending ? (room.discussion ? '토론하는 중...' : '입력중...')
     : room.auto.on ? (room.autoSleeping ? '잠든 중 · 말 걸면 깨어나요' : room.autoRest ? '오늘의 자동 대화는 쉬고 있어요' : room.autoRunning ? '켜져 있음 · 대화 중' : '켜져 있음') : '꺼져 있음';
 }
 // Models in use: the discussion group has its own, everything else uses the normal chat models.
@@ -316,15 +352,16 @@ function renderControls() {
   const busy = !!room.active || pending;
   $('#members').replaceChildren(...state.members.map((m) => {
     const li = document.createElement('li');
-    li.className = `member ${m.id === room.selected && room.targeted && !room.discussion ? 'selected' : ''} ${m.available ? '' : 'st-missing'}`;
+    const ready = state.catalog[m.id].connected;
+    li.className = `member ${m.id === room.selected && room.targeted && !room.discussion ? 'selected' : ''} ${!ready ? 'st-missing' : !room.enabled[m.id] ? 'st-off' : ''}`;
     li.style.setProperty('--c', m.color);
     const settings = bag()[m.id];
     const live = room.active?.states[m.id];
     li.innerHTML = `<div class="av-wrap" data-profile="${m.id}" role="button" tabindex="0" aria-label="${esc(m.name)} 프로필 보기"><img class="av" src="/avatars/${m.id}-pixel-128.png" alt=""><span class="st-dot"></span></div>
       <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div>
-      <div class="m-status">${live && live.status !== '대기' ? esc({ '생성 중': '답변 중' }[live.status] || live.status) : dot(statusOf(m.id, settings.model, true))}</div>
+      <div class="m-status">${live && live.status !== '대기' ? (live.status === '생성 중' ? wave(room.discussion && live.phase === 'review' ? '토론하는 중...' : '입력중...') : esc(live.status)) : dot(statusOf(m.id, settings.model, true))}</div>
       <div class="member-model">${room.discussion ? '토론 · ' : ''}${esc(settingText(settings))}</div>${limitHTML(m.id)}</div>
-      <label class="switch" title="대화 참여"><input type="checkbox" aria-label="${esc(m.name)} 대화 참여" ${room.enabled[m.id] ? 'checked' : ''}><span></span></label>`;
+      <label class="switch" title="대화 참여"><input type="checkbox" aria-label="${esc(m.name)} 대화 참여" ${room.enabled[m.id] && ready ? 'checked' : ''}><span></span></label>`;
     if (room.quotaRest?.[m.id]) {
       const resume = document.createElement('button');
       resume.type = 'button';
@@ -339,13 +376,16 @@ function renderControls() {
     }
     // The member row only toggles participation; targeted chat belongs to the bottom switch.
     li.addEventListener('click', (e) => {
-      if (!e.target.closest('.switch, [data-profile], button')) update({ enabled: { [m.id]: !room.enabled[m.id] } });
+      if (!e.target.closest('.switch, [data-profile], button')) ready ? update({ enabled: { [m.id]: !room.enabled[m.id] } }) : openSetup();
     });
-    li.querySelector('input').addEventListener('change', (e) => update({ enabled: { [m.id]: e.target.checked } }));
+    li.querySelector('input').addEventListener('change', (e) => {
+      if (!ready) { e.target.checked = false; openSetup(); return; }
+      update({ enabled: { [m.id]: e.target.checked } });
+    });
     return li;
   }));
   // Everyone in the room: me plus each AI that is on and connected.
-  const here = 1 + IDS.filter((id) => room.enabled[id] && state.catalog[id].available).length;
+  const here = 1 + IDS.filter((id) => room.enabled[id] && state.catalog[id].connected).length;
   $('#memberCount').textContent = String(here);
   $('#headCount').textContent = String(here);
   $('#headCount').setAttribute('aria-label', `참여자 ${here}명`);
@@ -354,8 +394,6 @@ function renderControls() {
   document.title = room.name || 'AI 단톡방';
   $('#webSearch').checked = room.webSearch;
   $('#webHint').hidden = !room.webSearch; // the note about search support only matters once it is on
-  $('#headSub').textContent = room.discussion ? `토론 모드 · 종합 ${nameOf(room.synthesizer)}`
-    : room.targeted ? `${nameOf(room.selected)} · ${room.models[room.selected].model} · 이 AI에게만` : '켜져 있는 AI 모두에게 보내요 · @로 한 명만 부를 수 있어요';
   $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요'
     : room.targeted ? `${nameOf(room.selected)}에게 메시지를 입력하세요` : '채팅을 입력하세요';
   renderRoomSub();
@@ -364,13 +402,13 @@ function renderControls() {
   const sel = room.selected;
   const pill = $('#modelPicker');
   if (room.discussion) {
-    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
+    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].connected);
     pill.style.setProperty('--c', 'var(--accent)');
     pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">토론</span><span class="pk-model">${joined.length}명 · 종합 ${esc(nameOf(room.synthesizer))}</span><span class="caret">⌄</span>`;
   } else if (!room.targeted) {
-    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
+    const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].connected);
     pill.style.setProperty('--c', 'var(--accent)');
-    pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">전체</span><span class="pk-model">${joined.length}명이 답해요</span><span class="caret">⌄</span>`;
+    pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">${joined.length === IDS.length ? '모두 함께 답변' : `${joined.length}명 참가 중`}</span><span class="caret">⌄</span>`;
   } else {
     const s = room.models[sel];
     const st = statusOf(sel, s.model);
@@ -634,14 +672,14 @@ function renderMenu() {
   if (multi()) {
     main.innerHTML = `<div class="mm-title">${room.discussion ? '토론 참여' : '답하는 AI'}</div>
       ${IDS.map((id) => `<div class="mm-ai ${room.enabled[id] ? '' : 'off'}" style="--c:${member(id).color}">
-        <label class="switch"><input type="checkbox" data-join="${id}" ${room.enabled[id] ? 'checked' : ''} aria-label="${esc(nameOf(id))} 대화 참여"><span></span></label>
+        <label class="switch"><input type="checkbox" data-join="${id}" ${room.enabled[id] && state.catalog[id].connected ? 'checked' : ''} aria-label="${esc(nameOf(id))} 대화 참여"><span></span></label>
         ${menuRow(`ai:${id}`, `${avatar(id)}<b>${esc(nameOf(id))}</b>`, esc(state.catalog[id].available ? shortSetting(id, bag()[id]) : '연결 설정 필요'))}</div>`).join('')}
       ${room.discussion ? menuRow('synth', '종합 담당', esc(nameOf(room.synthesizer)), avatar(room.synthesizer)) : ''}`;
   } else {
     const id = room.selected;
     const s = room.models[id];
     const testing = room.checking.includes(id);
-    main.innerHTML = `<div class="mm-title">${esc(nameOf(id))}에게만 보내요</div>
+    main.innerHTML = `<div class="mm-title">${esc(nameOf(id))} 먼저 · 작업은 함께</div>
       ${menuRow('models', '모델', esc(modelEntry(id, s.model)?.label || s.model), avatar(id))}
       ${modelEntry(id, s.model)?.efforts.length ? menuRow('effort', '생각 수준', esc(effortLabel(id, s.effort))) : ''}
       <div class="mm-status">${dot(statusOf(id, s.model))}<button type="button" class="link-btn" data-act="test" ${!state.catalog[id].available || testing ? 'disabled' : ''} title="짧은 질문 1회를 보내 확인합니다. 구독 사용량이 조금 소비됩니다.">${testing ? '확인 중…' : '호출 테스트'}</button></div>`;
@@ -652,7 +690,10 @@ function renderMenu() {
     menu.q = ''; menu.adding = false;
     renderMenu();
   }));
-  main.querySelectorAll('[data-join]').forEach((el) => el.addEventListener('change', () => update({ enabled: { [el.dataset.join]: el.checked } })));
+  main.querySelectorAll('[data-join]').forEach((el) => el.addEventListener('change', () => {
+    if (!state.catalog[el.dataset.join].connected) { el.checked = false; openSetup(); return; }
+    update({ enabled: { [el.dataset.join]: el.checked } });
+  }));
   main.querySelector('[data-act="test"]')?.addEventListener('click', (e) => {
     e.target.disabled = true; e.target.textContent = '확인 중…';
     const s = room.models[room.selected];
@@ -757,8 +798,8 @@ function connState(id) {
   const check = state.room.checks[id];
   if (!state.catalog[id].available) return { key: 'install', text: '설치가 필요해요' };
   if (state.room.checking.includes(id)) return { key: 'busy', text: '확인 중…' };
-  if (Object.values(check.models).some((c) => c.status === 'ok') || check.login?.status === 'ok') return { key: 'ok', text: '연결됐어요' };
   if (check.login?.status === 'fail') return { key: 'login', text: '로그인이 필요해요' };
+  if (state.catalog[id].connected) return { key: 'ok', text: '연결됐어요' };
   return { key: 'unknown', text: '아직 확인 전이에요' };
 }
 function openSetup() {
@@ -852,7 +893,7 @@ function renderSetup() {
       return `<li><b>${avatar(id)} ${esc(nameOf(id))}</b><span><span class="cs ${cs.key}">${esc(cs.text)}</span> <code>${esc(modelLabel(id, cur))}</code>${rec && cur.model === rec.model ? ' <span class="tag rec">추천</span>' : ''}</span></li>`;
     }).join('')}</ul>
       <div class="howto"><b>이렇게 쓰면 돼요</b><ol class="how">
-        <li>아래 입력창에 말을 걸면 <b>연결된 AI들이 모두</b> 답해요.</li>
+        <li>수다는 자유롭게 참여하고, 조사·이미지 같은 작업 요청에는 <b>연결된 AI들이 모두</b> 반응해요.</li>
         <li><code>@Claude</code>처럼 이름을 쓰면 그 AI에게만 물어봐요.</li>
         <li>위쪽 <b>Talk on</b>을 켜면 AI들이 알아서 서로 수다를 떨어요.</li>
         <li>궁금한 건 왼쪽 <b>[사용법 다시 보기]</b>에서 언제든 다시 볼 수 있어요.</li></ol></div>
@@ -963,7 +1004,8 @@ async function send() {
   if (pending || state.room.active || (!input.value.trim() && !image)) return;
   pending = true; renderControls();
   try {
-    await api('/api/send', { text: input.value.trim(), image });
+    await api('/api/send', { text: input.value.trim(), image, replyTo });
+    replyTo = null; replyChip.hidden = true;
     input.value = ''; autosize(); clearImage();
     applyState(await api('/api/state'));
     tl.scrollTop = tl.scrollHeight;
@@ -971,6 +1013,7 @@ async function send() {
   finally { pending = false; renderControls(); }
 }
 function autosize() { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight, 160)}px`; }
+replyChip.onclick = () => { replyTo = null; replyChip.hidden = true; };
 function clearImage() { image = null; $('#attachChip').hidden = true; $('#fileInput').value = ''; }
 async function attach(file) {
   if (!file) return;
@@ -1166,7 +1209,9 @@ $('#loadMore').onclick = async () => {
 };
 function connect() {
   const events = new EventSource('/events');
-  events.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
+  events.addEventListener('state', (e) => { applyState(JSON.parse(e.data)); window.dispatchEvent(new CustomEvent('usage-update', { detail: state.usage })); });
+  events.addEventListener('workbench', () => window.dispatchEvent(new Event('workbench-update')));
+  events.addEventListener('house', () => window.dispatchEvent(new Event('house-update')));
   events.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
     if (state.messages.some((x) => x.id === m.id)) return;

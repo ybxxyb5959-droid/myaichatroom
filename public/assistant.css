@@ -137,6 +137,23 @@ button:disabled { opacity: .5; cursor: default; }
 
 /* progress of the running answer */
 .typing { min-height: 30px; }
+.typing-wave { display: inline-flex; white-space: pre; }
+.typing-wave > span { display: inline-block; animation: typing-wave 1.4s ease-in-out infinite; animation-delay: calc(var(--i) * .09s); }
+@keyframes typing-wave { 0%, 50%, 100% { transform: translateY(0); } 25% { transform: translateY(-3px); } }
+.debating.busy .mini-av { animation: friendly-debate .8s ease-in-out infinite alternate; }
+.debating.busy:nth-child(even) .mini-av { animation-direction: alternate-reverse; }
+@keyframes friendly-debate { from { transform: rotate(-9deg) translateX(-2px); } to { transform: rotate(9deg) translateX(2px); } }
+.chat-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; font-size: 11px; color: var(--muted); }
+.chat-actions button { padding: 2px 4px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; border-radius: 8px; }
+.chat-actions button:hover, .reaction-picker summary:hover { color: var(--accent); }
+.reaction-picker { display: inline-block; }
+.reaction-picker summary { cursor: pointer; padding: 2px 4px; list-style: none; }
+.reaction-picker[open] { padding: 0 4px; border-radius: 8px; background: var(--panel-2); }
+.reaction-picker[open] summary { display: inline-block; }
+.chat-actions button[aria-pressed="true"] { background: var(--panel-2); color: var(--accent); }
+.reply-quote { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-left: 2px solid var(--accent); background: transparent; cursor: pointer; padding: 4px 8px; margin-bottom: 4px; font: inherit; font-size: 12px; color: var(--muted); text-align: left; }
+.reply-quote[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .typing-wave > span, .debating.busy .mini-av { animation: none; } }
 .typing.on { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 18px; }
 .pg-steps { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .pg-steps li { font-size: 12px; padding: 2px 9px; border-radius: 10px; background: var(--panel-2); color: var(--faint); }
