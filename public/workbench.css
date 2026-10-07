@@ -164,6 +164,46 @@
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #wbEmptyText { filter: none; } }
 .wb-empty p { font-size: 12px; color: var(--muted); margin: 0; text-align: center; }
 .wb-empty .wb-outline { width: auto; }
+.wb-start-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; width: min(420px, 100%); }
+.wb-start-steps li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 13px; }
+.wb-start-steps li > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.wb-start-steps small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.wb-start-mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; border: 1px solid var(--line-2); color: var(--muted); }
+.wb-start-done .wb-start-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.wb-start-now { border-color: var(--accent) !important; }
+.wb-start-now .wb-start-mark { border-color: var(--accent); color: var(--accent); }
+.wb-start-todo { opacity: .65; }
+/* Task card: the execution record of one request, kept apart from the conversation. */
+.wb-task { width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-left: 3px solid var(--line-2); border-radius: 12px; background: var(--panel); padding: 14px 16px; font-size: 13px; }
+.wb-task-running { border-left-color: var(--accent); }
+.wb-task-done { border-left-color: var(--ok); }
+.wb-task-interrupted { border-left-color: var(--warn); }
+.wb-task-failed { border-left-color: var(--err); }
+.wb-task-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.wb-task-head b { overflow-wrap: anywhere; }
+.wb-task-state { flex: none; font-size: 12px; color: var(--muted); }
+.wb-task-time { font-variant-numeric: tabular-nums; }
+.wb-task-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 5px; animation: wb-blink 1.2s ease-in-out infinite; }
+@keyframes wb-blink { 50% { opacity: .25; } }
+.wb-task p { margin: 6px 0; }
+.wb-task-meta, .wb-task-summary { color: var(--muted); font-size: 12px; }
+.wb-task-steps { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.wb-task-steps li { color: var(--muted); }
+.wb-step-done { color: var(--ok) !important; }
+.wb-step-now { color: var(--accent) !important; font-weight: 650; }
+.wb-step-stop { color: var(--warn) !important; font-weight: 650; }
+.wb-step-skip { opacity: .6; }
+.wb-task-now { color: var(--accent); font-weight: 600; overflow-wrap: anywhere; }
+.wb-task-note { color: var(--warn); }
+.wb-task-lines, .wb-task-files { list-style: none; padding: 0; margin: 6px 0; display: grid; gap: 3px; font-size: 12px; overflow-wrap: anywhere; }
+.wb-task-lines li { color: var(--muted); }
+.wb-task-lines small, .wb-task-files small { color: var(--muted); }
+.wb-task-log { margin-top: 8px; font-size: 12px; }
+.wb-task-log > summary { cursor: pointer; color: var(--muted); }
+.wb-task-log .wb-tool { margin-top: 6px; }
+.wb-task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.wb-task-actions .wb-outline { width: auto; }
+.wb-reduce .wb-task-dot { animation: none; }
 #wbMessages { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
 .wb-message { align-self: flex-start; max-width: 100%; padding: 12px 16px; border-radius: 14px; background: var(--bubble); border: 1px solid var(--bubble-line); overflow-wrap: anywhere; }
 .wb-message-head { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
@@ -173,7 +213,7 @@
 .wb-mine { align-self: flex-end; background: var(--mine); color: var(--mine-ink); border-color: transparent; }
 .wb-mine .wb-message-head { color: inherit; opacity: .7; }
 .wb-tool { background: transparent; font-size: 12px; color: var(--muted); width: 100%; }
-.wb-tool pre, .wb-diff pre { white-space: pre-wrap; font: 11px/1.6 var(--mono); overflow-wrap: anywhere; max-height: 340px; overflow: auto; }
+.wb-tool pre { white-space: pre-wrap; font: 11px/1.6 var(--mono); overflow-wrap: anywhere; max-height: 340px; overflow: auto; }
 .wb-permission { border: 1px solid var(--warn); background: var(--panel); border-radius: 12px; padding: 16px; max-width: 1000px; margin: 20px auto; }
 .wb-permission h3 { margin: 0; font-size: 15px; }
 .wb-permission p { font-size: 12px; overflow-wrap: anywhere; }
@@ -181,8 +221,51 @@
 .wb-permission button { margin: 4px 8px 0 0; }
 .wb-changes { margin: 20px auto 0; max-width: 1000px; font-size: 12px; }
 .wb-changes details { padding: 8px; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; }
-.wb-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 10px 0; }
-.wb-diff section { min-width: 0; }
+.wb-changes .wb-change-file > summary, .wb-changes .wb-change > summary { cursor: pointer; }
+.wb-changes .wb-change { margin: 8px 0 0; }
+.wb-changes .wb-change > button { margin-top: 6px; }
+.wb-plus { color: var(--ok); font-weight: 650; }
+.wb-minus { color: var(--err); font-weight: 650; }
+.wb-diff { margin: 8px 0; max-height: 420px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; font: 11px/1.6 var(--mono); }
+.wb-diff-note { margin: 6px 8px; color: var(--muted); font-family: inherit; }
+.wb-hunk + .wb-hunk { border-top: 1px dashed var(--line-2); }
+.wb-hunk-head { padding: 2px 8px; color: var(--muted); background: var(--panel-2); }
+.wb-dl { display: grid; grid-template-columns: 3.5em 3.5em 1.4em 1fr; }
+.wb-dl code { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.wb-ln { color: var(--muted); text-align: right; padding-right: 6px; user-select: none; opacity: .7; }
+.wb-sign { text-align: center; user-select: none; }
+.wb-dl-add { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.wb-dl-del { background: color-mix(in srgb, var(--err) 14%, transparent); }
+.wb-file-actions { display: inline-flex; gap: 8px; margin-left: 8px; }
+.wb-link { border: none; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: 11px; width: auto; }
+.wb-link:disabled { color: var(--muted); cursor: not-allowed; opacity: .6; }
+.wb-task-block { align-self: center; color: var(--muted); font-size: 11px; }
+.wb-notice { max-width: 1000px; margin: 0 auto 6px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 10px; font-size: 12px; background: var(--panel); }
+.wb-quota { display: block; font-size: 10px; color: var(--muted); }
+.wb-quota-low { color: var(--err); font-weight: 650; }
+.wb-quota-mid { color: var(--warn); }
+.wb-advice { display: block; font-size: 11px; color: var(--muted); font-weight: normal; margin-top: 2px; }
+.wb-choice-dialog p { white-space: pre-line; }
+.wb-choice-dialog footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.wb-crew { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 6px; }
+.wb-crew li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.wb-crew img { width: 26px; height: 26px; border-radius: 50%; }
+.wb-crew li > span:nth-child(2) { display: grid; min-width: 0; }
+.wb-crew small { color: var(--muted); }
+.wb-crew em { font-style: normal; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.wb-crew-state { color: var(--muted); white-space: nowrap; }
+.wb-crew-now .wb-crew-state { color: var(--accent); font-weight: 650; }
+.wb-crew-done .wb-crew-state { color: var(--ok); }
+.wb-crew-stop .wb-crew-state { color: var(--warn); }
+.wb-permission-plan { border-color: var(--accent); border-width: 2px; }
+.wb-permission-plan h3 { color: var(--accent); }
+.wb-plan-text { font-size: 13px; margin: 8px 0; }
+.wb-plan-list { padding-left: 18px; font-size: 13px; display: grid; gap: 8px; }
+.wb-plan-list small { color: var(--muted); }
+.wb-plan-files code { font-size: 11px; margin-right: 6px; }
+.wb-permission-risk { border-color: var(--err); border-width: 2px; }
+.wb-permission-risk h3 { color: var(--err); }
+.wb-permission-risk ul { margin: 6px 0; padding-left: 20px; font-size: 13px; }
 .wb-composer-area { margin: 0 24px 18px; flex-shrink: 0; }
 .wb-composer-toolbar { display: flex; align-items: center; gap: 8px; margin: 0 4px 8px; min-height: 30px; }
 .workbench #wbProjectShortcut { display: inline-flex; align-items: center; gap: 5px; max-width: 55%; padding: 4px 6px; border-color: transparent; background: transparent; font-size: 12px; }

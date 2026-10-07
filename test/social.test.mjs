@@ -106,7 +106,7 @@ test('replies and reactions persist and reject invalid targets', async (t) => {
   assert.equal((await h.post('/api/react', { id: -1, emoji: '❤️' })).status, 400);
   assert.equal((await h.send({ text: '답장', replyTo: -1 })).status, 400);
 });
-test('image requests involve all peers but produce exactly one real image, never through Claude', async (t) => {
+test('an image request to @claude is answered by Claude only and produces exactly one real image, never through Claude', async (t) => {
   const h = await fixture(t);
   await h.post('/api/check/login', {});
   h.control.text = '구도를 정리했어\n[대화유형] 이미지\n[이미지요청] 밤하늘의 고양이';
@@ -114,12 +114,13 @@ test('image requests involve all peers but produce exactly one real image, never
   assert.equal(h.control.images.length, 1);
   assert.notEqual(h.control.images[0].id, 'claude');
   const messages = h.app.view().messages;
-  assert.equal(new Set(messages.filter((m) => m.model).map((m) => m.from)).size, 3);
+  assert.deepEqual([...new Set(messages.filter((m) => m.model && !m.attach).map((m) => m.from))], ['claude']); // @mention: only the named AI answers
   assert.equal(messages.filter((m) => m.attach?.generated).length, 1);
   assert.match(messages.find((m) => m.attach?.generated).text, /기획 .*이미지 생성/);
 });
 test('image failures are visible and never create fake attachments', async (t) => {
   const h = await fixture(t);
+  await h.post('/api/check/login', {});
   h.control.imageFail = true;
   h.control.text = '요청 확인\n[대화유형] 이미지\n[이미지요청] 고양이';
   await h.send({ text: '그려줘' });
@@ -130,11 +131,11 @@ test('image failures are visible and never create fake attachments', async (t) =
 test('bios have a persisted minimum day interval', async (t) => {
   const h = await fixture(t);
   h.control.text = '안녕\n[대화유형] 작업\n[소개] 오늘도 살아있다';
-  await h.send({ text: '인사' });
+  await h.send({ text: '얘들아 인사' });
   h.control.text = '안녕\n[대화유형] 작업\n[소개] 샘알트먼 사랑해';
-  await h.send({ text: '인사' });
+  await h.send({ text: '얘들아 인사' });
   assert.ok(IDS.every((id) => h.app.view().room.bios[id] === '오늘도 살아있다'));
   h.now.value += BIO_INTERVAL;
-  await h.send({ text: '인사' });
+  await h.send({ text: '얘들아 인사' });
   assert.ok(IDS.every((id) => h.app.view().room.bios[id] === '샘알트먼 사랑해'));
 });

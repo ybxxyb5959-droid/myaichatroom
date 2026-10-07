@@ -1,0 +1,54 @@
+{
+  "name": "ai-chatroom",
+  "version": "0.1.0",
+  "description": "A personal AI group chat for Windows",
+  "author": "AI Chatroom contributors",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "scripts": {
+    "start": "node server.mjs --open",
+    "desktop": "electron .",
+    "test": "node --test",
+    "test:desktop": "node desktop/smoke.mjs",
+    "dist:win": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.ybxxyb5959.ai-chatroom",
+    "productName": "AI Chatroom",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop/main.mjs",
+      "desktop/policy.mjs",
+      "server.mjs",
+      "lib/**/*.mjs",
+      "public/**/*",
+      "config.example.json",
+      "LICENSE",
+      "package.json"
+    ],
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "AI-Chatroom-Setup-${version}-${arch}.${ext}",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI 단톡방",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    }
+  }
+}

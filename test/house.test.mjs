@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { House, parseHouseReply, HOUSE_LIMITS } from '../lib/house.mjs';
+import { houseNoticeHTML } from '../public/format.mjs';
 
 const opts = { ids: ['claude', 'gpt', 'gemini'], names: { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' } };
 const make = () => new House(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'house-')), 'house.json'), opts);
@@ -81,4 +82,49 @@ test('model text is parsed from fenced or chatty replies', () => {
   assert.deepEqual(parseHouseReply('```json\n{"say":"hi"}\n```'), { say: 'hi' });
   assert.equal(parseHouseReply('no json here'), null);
   assert.equal(parseHouseReply('[1,2]'), null);
+});
+
+test('build notices count actual changes and ignore repeated paint, failed actions, speech and movement', () => {
+  const house = make();
+  const floor = { type: 'floor', x1: 2, z1: 2, x2: 3, z2: 3, color: 'wood' };
+  assert.equal(house.apply('claude', { actions: [floor] }).notice, '바닥 놓음 4칸 (2,2–3,3)');
+  assert.equal(house.apply('claude', { say: '이어 하자', actions: [floor, { type: 'move', x: 4, z: 4 },
+    { type: 'place', def: '없는 가구', x: 0, z: 0 }] }).notice, '');
+  assert.equal(house.apply('gpt', { actions: [{ ...floor, color: 'blue' }] }).notice, '바닥 변경 4칸 (2,2–3,3)');
+  assert.equal(house.apply('gpt', { actions: [{ type: 'erase', x: 2, z: 2 }] }).notice, '바닥 지움 1칸 (2,2–2,2)');
+  assert.equal(house.apply('gpt', { actions: [{ ...floor, x1: 2, z1: 2, x2: 2, z2: 2 },
+    { type: 'erase', x: 2, z: 2 }] }).notice, '', 'a reverted change has no net effect');
+});
+
+test('notices include doors, furniture footprint and designs but suppress unchanged doors and designs', () => {
+  const house = make();
+  house.apply('claude', { actions: [{ type: 'floor', x1: 0, z1: 0, x2: 3, z2: 3, color: 'wood' },
+    { type: 'wall', x1: 0, z1: 0, x2: 1, z2: 0, color: 'cream' }] });
+  assert.equal(house.apply('claude', { actions: [{ type: 'door', x: 1, z: 0 }, sofa,
+    { type: 'place', def: '소파', x: 2, z: 1, rot: 1 }] }).notice,
+  '문 1개 만듦, 소파 배치, 가구 설계 1개 (1,0–2,2)');
+  assert.equal(house.apply('claude', { actions: [{ type: 'door', x: 1, z: 0 }, sofa] }).notice, '');
+  assert.equal(house.apply('claude', { actions: [{ type: 'erase', x: 2, z: 2 }] }).notice, '소파 치움 (2,1–2,2)');
+});
+
+test('notices count only permitted cells and retain partial changes when a wall reaches its limit', () => {
+  const house = make();
+  const out = house.apply('gemini', { actions: [
+    { type: 'floor', x1: 0, z1: 0, x2: 5, z2: 5, color: 'wood' },
+    { type: 'floor', x1: 6, z1: 0, x2: 11, z2: 5, color: 'wood' },
+  ] });
+  assert.equal(out.notice, '바닥 놓음 36칸 (0,0–5,5)');
+  for (let x = 0; x < 15; x++) for (let z = 0; z < 20; z++) house.s.walls[`${x},${z}`] = { c: 'white', door: false };
+  delete house.s.walls['0,0'];
+  const partial = house.apply('gpt', { actions: [{ type: 'wall', x1: 0, z1: 0, x2: 19, z2: 0, color: 'blue' }] });
+  assert.equal(partial.notice, '', 'an overlong wall is refused before mutation');
+  const limited = house.apply('gpt', { actions: [{ type: 'wall', x1: 14, z1: 0, x2: 16, z2: 0, color: 'blue' }] });
+  assert.equal(limited.errors.length, 1);
+  assert.equal(limited.notice, '벽 놓음 1칸, 벽 변경 1칸 (14,0–15,0)');
+});
+
+test('house notice markup distinguishes the actor and escapes all untrusted text', () => {
+  assert.equal(houseNoticeHTML('Claude', '바닥 놓음 4칸 (2,2–3,3)'),
+    '🧱 <span class="who">Claude</span> 바닥 놓음 4칸 (2,2–3,3)');
+  assert.equal(houseNoticeHTML('<img>', '<script>'), '🧱 <span class="who">&lt;img&gt;</span> &lt;script&gt;');
 });

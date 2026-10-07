@@ -73,6 +73,171 @@ test('solo edits real project files, preserves originals, and restores safely', 
   assert.equal(fs.existsSync(path.join(h.projectPath, 'test/sum.test.mjs')), false);
 });
 
+test('a request becomes a task that records steps, current file, commands and its outcome', async (t) => {
+  const seen = [], holder = {};
+  const h = fixture(t, { gpt: [
+    { action: 'read', path: 'sum.mjs' },
+    { action: 'patch', path: 'sum.mjs', find: 'a - b', replace: 'a + b' },
+    { action: 'command', command: 'node', args: ['--test'], reason: '검사' },
+    { action: 'done', text: '수정과 검사 완료' },
+  ] }, { onChange: () => { const task = holder.h?.session.tasks?.at(-1); if (task) seen.push(structuredClone(task.current)); } });
+  holder.h = h;
+  fs.writeFileSync(path.join(h.projectPath, 'sum.mjs'), 'export const sum = (a, b) => a - b;\n');
+  h.bench.configure(h.session.id, { approval: 'auto' });
+  h.bench.runner = async () => { seen.push(structuredClone(h.session.tasks[0].current)); return { code: 0, stdout: 'ok', stderr: '' }; };
+  await h.start('합산 버그 고쳐줘\n자세한 설명');
+  const [task] = h.session.tasks;
+  assert.equal(h.session.tasks.length, 1);
+  assert.equal(task.title, '합산 버그 고쳐줘');
+  assert.equal(task.status, 'done');
+  assert.equal(task.stopReason, null);
+  assert.deepEqual(task.current, { actor: null, action: null, file: null });
+  assert.ok(task.endedAt >= task.startedAt);
+  assert.deepEqual(task.commands.map((c) => [c.command, c.code, c.timedOut]), [[['node', '--test'], 0, false]]);
+  for (const current of [{ actor: 'gpt', action: 'think', file: null }, { actor: 'gpt', action: 'read', file: 'sum.mjs' },
+    { actor: 'gpt', action: 'patch', file: 'sum.mjs' }, { actor: 'gpt', action: 'command', file: null }]) assert.ok(seen.some((c) => JSON.stringify(c) === JSON.stringify(current)), JSON.stringify(current));
+  assert.ok(seen.every((c) => Object.keys(c).join() === 'actor,action,file'));
+  assert.ok(h.session.messages.every((m) => m.taskId === task.id));
+  assert.equal(h.session.messages.find((m) => m.phase === 'read').path, 'sum.mjs');
+  assert.equal(h.session.changes[0].taskId, task.id);
+  assert.equal(h.bench.view().sessions[0].tasks, undefined);
+});
+
+test('task status ends as failed or interrupted with a fixed reason', async (t) => {
+  const h = fixture(t, { gpt: [{ action: 'unknown' }, { action: 'ask', text: '어느 파일인가요?' }, { action: 'command', command: 'node', args: ['-v'] }] });
+  await h.start('잘못된 행동');
+  await h.start('질문할 요청');
+  h.bench.configure(h.session.id, { approval: 'deny' });
+  await h.start('명령 요청');
+  h.adapter.chat = async (_id, _brief, _prompt, opts) => {
+    await new Promise((resolve) => opts.signal.addEventListener('abort', resolve, { once: true }));
+    return { ok: false, detail: 'cancelled' };
+  };
+  h.bench.start(h.session.id, '중지할 요청');
+  await h.bench.cancel(h.session.id);
+  assert.deepEqual(h.session.tasks.map((x) => [x.status, x.stopReason]),
+    [['failed', null], ['interrupted', 'needs_input'], ['interrupted', 'declined'], ['interrupted', 'cancelled']]);
+  assert.equal(h.session.tasks[2].stoppedAt, 'command');
+  assert.ok(h.session.tasks.every((x) => ['running', 'done', 'interrupted', 'failed'].includes(x.status) && x.endedAt && x.current.actor === null));
+});
+
+test('older sessions without tasks still load, and running tasks stop on restart', async (t) => {
+  const h = fixture(t, { gpt: [{ action: 'done', text: '완료' }] });
+  delete h.session.tasks; h.bench.message(h.session, 'user', '예전 메시지'); h.bench.save();
+  const legacy = new Workbench(h.args);
+  assert.equal(legacy.session(h.session.id).tasks, undefined);
+  assert.equal(legacy.view(h.session.id).session.messages[0].taskId, undefined);
+  await h.start('새 요청');
+  assert.equal(h.session.tasks.length, 1);
+  assert.equal(h.session.messages[0].taskId, undefined);
+  h.session.tasks[0].status = 'running'; h.session.tasks[0].endedAt = null; h.bench.save();
+  const reloaded = new Workbench(h.args).session(h.session.id).tasks[0];
+  assert.equal(reloaded.status, 'interrupted');
+  assert.equal(reloaded.stopReason, 'restart');
+  assert.deepEqual(reloaded.current, { actor: null, action: null, file: null });
+});
+
+const two = (file, steps) => steps.flatMap(([find, replace]) => [{ action: 'read', path: file }, { action: 'patch', path: file, find, replace }]);
+test('views carry change metadata only; details are fetched one change at a time', async (t) => {
+  const h = fixture(t, { gpt: [...two('a.txt', [['one', 'ONE'], ['two', 'TWO\nthree']]), { action: 'write', path: 'new.txt', content: 'n1\nn2\n' }, { action: 'done', text: '완료' }] });
+  fs.writeFileSync(path.join(h.projectPath, 'a.txt'), 'one\ntwo\n');
+  await h.start();
+  const view = h.bench.view(h.session.id).session;
+  assert.ok(view.changes.every((c) => !('before' in c) && !('after' in c)));
+  assert.deepEqual(view.changes.map((c) => [c.path, c.kind, c.added, c.removed]), [['a.txt', 'patch', 1, 1], ['a.txt', 'patch', 2, 1], ['new.txt', 'create', 2, 0]]);
+  assert.deepEqual(view.tasks[0].files.map((f) => [f.path, f.changeIds.length, f.added, f.removed, f.status]), [['a.txt', 2, 3, 2], ['new.txt', 1, 2, 0]].map((x) => [...x, 'applied']));
+  assert.ok(h.session.changes[0].before, 'the saved record keeps the original text');
+  const detail = h.bench.changeDetail(h.session.id, h.session.changes[1].id);
+  assert.deepEqual(detail.hunks[0].rows.map((r) => r[0] + r[1]), [' ONE', '-two', '+TWO', '+three']);
+  assert.throws(() => h.bench.changeDetail(h.session.id, 'missing'), /변경 기록/);
+  delete h.session.changes[0].added; delete h.session.changes[0].removed; delete h.session.changes[0].taskId;
+  assert.deepEqual(h.bench.view(h.session.id).session.changes[0], { id: h.session.changes[0].id, path: 'a.txt', status: 'applied', taskId: null, kind: 'patch', added: 1, removed: 1 });
+});
+
+test('reverting a task restores repeated edits newest first and reports files it must leave alone', async (t) => {
+  const h = fixture(t, { gpt: [...two('a.txt', [['one', 'ONE'], ['ONE', 'uno']]), ...two('b.txt', [['b', 'B']]), { action: 'write', path: 'c.txt', content: 'new' }, { action: 'done', text: '완료' }] });
+  fs.writeFileSync(path.join(h.projectPath, 'a.txt'), 'one\n'); fs.writeFileSync(path.join(h.projectPath, 'b.txt'), 'b\n');
+  await h.start();
+  const taskId = h.session.tasks[0].id;
+  fs.writeFileSync(path.join(h.projectPath, 'b.txt'), 'user edit\n');
+  const preview = h.bench.revertPreview(h.session.id, taskId);
+  assert.deepEqual(preview.files.map((f) => [f.path, f.ok, f.changes.length, f.deletes]), [['a.txt', true, 2, false], ['b.txt', false, 1, false], ['c.txt', true, 1, true]]);
+  assert.match(preview.files[1].reason, /이후에 파일이 바뀌어/);
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'a.txt'), 'utf8'), 'uno\n', 'preview writes nothing');
+  assert.throws(() => h.bench.revert(h.session.id, taskId), /가능한 파일만/);
+  const { results } = h.bench.revert(h.session.id, taskId, undefined, true);
+  assert.deepEqual(results.map((r) => [r.path, r.ok, r.restored]), [['a.txt', true, 2], ['b.txt', false, 0], ['c.txt', true, 1]]);
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'a.txt'), 'utf8'), 'one\n');
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'b.txt'), 'utf8'), 'user edit\n');
+  assert.equal(fs.existsSync(path.join(h.projectPath, 'c.txt')), false);
+  assert.deepEqual(h.session.changes.map((c) => c.status), ['restored', 'restored', 'applied', 'restored']);
+  assert.match(h.session.messages.at(-1).text, /2개 파일 성공, 1개 파일 실패[\s\S]*✕ b\.txt/);
+  assert.throws(() => h.bench.revert(h.session.id, taskId, 'b.txt'), /되돌릴 수 있는 파일이 없어요/);
+});
+
+test('one file can be reverted alone; a broken chain or a running job is refused', async (t) => {
+  const h = fixture(t, { gpt: [...two('a.txt', [['one', 'ONE'], ['ONE', 'uno']]), ...two('b.txt', [['b', 'B']]), { action: 'done', text: '완료' }] });
+  fs.writeFileSync(path.join(h.projectPath, 'a.txt'), 'one\n'); fs.writeFileSync(path.join(h.projectPath, 'b.txt'), 'b\n');
+  await h.start();
+  const taskId = h.session.tasks[0].id;
+  h.bench.restore(h.session.id, h.session.changes[1].id); // the existing single restore still works
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'a.txt'), 'utf8'), 'ONE\n');
+  h.bench.revert(h.session.id, taskId, 'a.txt');
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'a.txt'), 'utf8'), 'one\n');
+  assert.equal(fs.readFileSync(path.join(h.projectPath, 'b.txt'), 'utf8'), 'B\n');
+  assert.equal(h.bench.revertPreview(h.session.id, taskId, 'a.txt').files[0].reason, '이미 되돌렸어요.');
+  h.adapter.chat = async (_id, _brief, _prompt, opts) => {
+    await new Promise((resolve) => opts.signal.addEventListener('abort', resolve, { once: true }));
+    return { ok: false, detail: 'cancelled' };
+  };
+  h.bench.start(h.session.id, '진행 중 작업');
+  assert.throws(() => h.bench.revert(h.session.id, taskId, 'b.txt'), /먼저 중지/);
+  assert.throws(() => h.bench.revertPreview(h.session.id, taskId), /먼저 중지/);
+  await h.bench.cancel(h.session.id);
+});
+
+test('automatic approval still stops for a destructive command until the user confirms', { timeout: 10000 }, async (t) => {
+  const h = fixture(t, { gpt: [
+    { action: 'command', command: 'node', args: ['--test'] },
+    { action: 'command', command: 'git', args: ['reset', '--hard', 'HEAD~1'], reason: '되돌리기' },
+    { action: 'command', command: 'git', args: ['clean', '-fd'] },
+  ] });
+  const executed = [];
+  h.bench.runner = async (...args) => { executed.push(args[1]); return { code: 0, stdout: '', stderr: '' }; };
+  h.bench.configure(h.session.id, { approval: 'auto' });
+  h.bench.start(h.session.id, '정리');
+  const done = h.bench.jobs.get(h.session.id).done;
+  await h.waitFor(() => h.session.pending);
+  assert.deepEqual(executed, [['--test']]);
+  assert.equal(h.session.pending.command, 'git');
+  assert.equal(h.session.pending.risk.auto, true);
+  assert.match(h.session.pending.risk.reasons[0], /작업 내용이 삭제/);
+  assert.equal(h.session.tasks[0].current.action, 'approval');
+  h.bench.approve(h.session.id, h.session.pending.id, true);
+  await h.waitFor(() => h.session.pending?.args?.[0] === 'clean');
+  assert.deepEqual(executed, [['--test'], ['reset', '--hard', 'HEAD~1']]);
+  h.bench.approve(h.session.id, h.session.pending.id, false);
+  await done;
+  assert.deepEqual(executed.length, 2);
+  assert.deepEqual([h.session.status, h.session.tasks[0].status, h.session.tasks[0].stopReason, h.session.tasks[0].stoppedAt], ['declined', 'interrupted', 'declined', 'approval']);
+});
+
+test('a save retries a briefly locked state file and still reports a lasting failure', async (t) => {
+  const h = fixture(t);
+  const original = fs.renameSync;
+  let calls = 0;
+  t.after(() => { fs.renameSync = original; });
+  fs.renameSync = (...args) => { if (++calls < 3) throw Object.assign(new Error('locked'), { code: 'EPERM' }); return original(...args); };
+  h.bench.message(h.session, 'user', '저장 확인');
+  assert.equal(calls, 3);
+  assert.equal(new Workbench(h.args).session(h.session.id).messages.at(-1).text, '저장 확인');
+  fs.renameSync = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  assert.throws(() => h.bench.save(), /denied/);
+  fs.renameSync = () => { throw Object.assign(new Error('broken'), { code: 'EIO' }); };
+  assert.throws(() => h.bench.save(), /broken/);
+  fs.renameSync = original;
+});
+
 test('sessions, settings and history persist independently from each other', async (t) => {
   const h = fixture(t);
   const second = h.bench.createSession(h.project.id);
@@ -173,6 +338,7 @@ test('division assigns distinct files and integrates actual results', async (t) 
   for (const id of WORK_IDS) assert.equal(fs.readFileSync(path.join(h.projectPath, `${id}.txt`), 'utf8'), id);
   assert.equal(h.session.changes.length, 3);
   assert.ok(h.session.messages.some((m) => m.phase === '종합 확인'));
+  assert.deepEqual([h.session.tasks[0].status, h.session.tasks[0].phase, h.session.tasks[0].participants], ['done', '종합 확인', WORK_IDS]);
   assert.throws(() => h.bench.plan({ project: h.project }, { tasks: [
     { id: 'gpt', task: 'a', files: ['shared.js'] }, { id: 'gemini', task: 'b', files: ['shared.js'] },
   ] }, ['gpt', 'gemini']), /같은 파일/);
@@ -188,12 +354,63 @@ test('collaboration reaches real agreement before writing; disagreement pauses w
     ]]));
     queues.gpt.splice(1, 0, plan); queues.gpt.push({ action: 'done', text: '종합 확인' });
     const h = fixture(t, queues);
-    h.bench.configure(h.session.id, { mode: 'collaborate' }); await h.start();
+    h.bench.configure(h.session.id, { mode: 'collaborate' });
+    h.bench.start(h.session.id, '요청한 파일만 수정해줘');
+    const done = h.bench.jobs.get(h.session.id).done;
+    if (agree) {
+      // Agreement alone no longer edits: the plan waits for the user.
+      await h.waitFor(() => h.session.pending?.kind === 'plan');
+      assert.equal(h.session.status, 'waiting');
+      assert.ok(WORK_IDS.every((id) => !fs.existsSync(path.join(h.projectPath, `${id}.txt`))));
+      assert.deepEqual(h.session.pending.tasks.map((x) => [x.id, x.files, x.role]), WORK_IDS.map((id) => [id, [`${id}.txt`], h.session.tasks[0].roles[id]]));
+      assert.equal(h.session.tasks[0].current.action, 'plan_approval');
+      assert.deepEqual([h.session.phase, h.session.speaker], ['계획 승인', 'gpt']);
+      h.bench.approve(h.session.id, h.session.pending.id, true);
+    }
+    await done;
     assert.equal(h.session.status, agree ? 'done' : 'needs_input');
+    assert.deepEqual(Object.keys(h.session.tasks[0].roles).sort(), [...WORK_IDS].sort());
+    assert.ok(h.calls.filter((c) => /역할은 "/.test(c.prompt)).length === 3, 'each opinion call carries its role; no extra call');
+    assert.deepEqual(h.session.tasks[0].working, []);
     assert.equal(h.session.changes.length, agree ? 3 : 0);
     assert.equal(h.session.messages.filter((m) => m.phase === '의견').length, 3);
     if (!agree) assert.ok(WORK_IDS.every((id) => !fs.existsSync(path.join(h.projectPath, `${id}.txt`))));
+    assert.deepEqual([h.session.tasks[0].status, h.session.tasks[0].stopReason], agree ? ['done', null] : ['interrupted', 'needs_input']);
   }
+});
+
+test('a declined plan edits nothing, and after approval a risky command is still asked separately', async (t) => {
+  const collab = (tail) => {
+    const queues = Object.fromEntries(WORK_IDS.map((id) => [id, [{ action: 'opinion', agree: false, text: `${id} 의견` }, { action: 'opinion', agree: true, text: '합의' }, ...tail(id)]]));
+    queues.gpt.splice(1, 0, plan);
+    return queues;
+  };
+  const declined = fixture(t, collab(() => []));
+  declined.bench.configure(declined.session.id, { mode: 'collaborate' });
+  declined.bench.start(declined.session.id, '수정해줘');
+  let done = declined.bench.jobs.get(declined.session.id).done;
+  await declined.waitFor(() => declined.session.pending?.kind === 'plan');
+  declined.bench.approve(declined.session.id, declined.session.pending.id, false);
+  await done;
+  assert.deepEqual([declined.session.status, declined.session.tasks[0].status, declined.session.tasks[0].stopReason], ['interrupted', 'interrupted', 'plan_declined']);
+  assert.equal(declined.session.changes.length, 0);
+  assert.ok(WORK_IDS.every((id) => !fs.existsSync(path.join(declined.projectPath, `${id}.txt`))));
+  assert.deepEqual(Object.keys(declined.session.tasks[0].assignments).sort(), [...WORK_IDS].sort());
+
+  const risky = fixture(t, collab((id) => (id === 'gpt' ? [{ action: 'command', command: 'git', args: ['reset', '--hard'] }] : [])));
+  let executed = 0; risky.bench.runner = async () => { executed++; return { code: 0, stdout: '', stderr: '' }; };
+  risky.bench.configure(risky.session.id, { mode: 'collaborate', approval: 'auto' });
+  risky.bench.start(risky.session.id, '수정해줘');
+  done = risky.bench.jobs.get(risky.session.id).done;
+  await risky.waitFor(() => risky.session.pending?.kind === 'plan');
+  risky.bench.approve(risky.session.id, risky.session.pending.id, true);
+  await risky.waitFor(() => risky.session.pending?.risk);
+  assert.equal(risky.session.pending.kind, undefined, 'the command approval is a different request from the plan approval');
+  assert.equal(executed, 0);
+  risky.bench.approve(risky.session.id, risky.session.pending.id, false);
+  await done;
+  assert.equal(executed, 0);
+  assert.deepEqual([risky.session.status, risky.session.tasks[0].stopReason], ['declined', 'declined']);
 });
 
 test('context reports actual input characters and omissions without invented token counts', async (t) => {

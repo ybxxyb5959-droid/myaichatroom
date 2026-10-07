@@ -40,10 +40,13 @@
       <div class="sec-label">대화 설정</div>
       <div id="autoField">
         <div class="field">
-          <span class="field-label">대화 수준</span>
-          <div class="seg" id="levelSeg" role="group" aria-label="대화 수준"><button type="button" data-level="low">낮음</button><button type="button" data-level="medium">중간</button><button type="button" data-level="high">높음</button></div>
+          <span class="field-label">AI 활동량</span>
+          <div class="seg" id="levelSeg" role="group" aria-label="AI 활동량"><button type="button" data-level="low">🌙 조용히</button><button type="button" data-level="medium">🙂 보통</button><button type="button" data-level="high">🎉 활발하게</button></div>
         </div>
         <p class="hint" id="levelHint"></p>
+        <details class="feature-fold"><summary>활동범위</summary>
+          <div class="feature-list" id="featureList" role="group" aria-label="자동 활동 종류"></div>
+        </details>
         <p class="hint" id="autoNote" hidden></p>
         <div class="field">
           <label class="field-label" for="autoSleep">자동 잠들기</label>
@@ -116,12 +119,9 @@
           <svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z" fill="currentColor"/></svg>
         </button>
       </div>
+      <div class="recipient-hint" id="recipientHint" aria-live="polite"></div>
       <div class="compose-options">
         <button id="modelPicker" class="picker-pill" type="button" aria-haspopup="menu" aria-expanded="false">모델 선택</button>
-        <label class="debate-switch" id="targetSwitch" title="켜면 고른 AI 한 명에게만 보내요. 끄면 켜져 있는 AI 모두가 답해요">
-          <span class="ds-label">특정 AI</span>
-          <span class="switch"><input id="targetToggle" type="checkbox" aria-label="특정 AI에게만 보내기"><span></span></span>
-        </label>
         <label class="debate-switch" id="debateSwitch" title="켜면 참여 AI들이 의견 → 검토 → 최종 정리를 진행합니다">
           <span class="ds-label">토론</span>
           <span class="switch"><input id="debateToggle" type="checkbox" aria-label="토론"><span></span></span>

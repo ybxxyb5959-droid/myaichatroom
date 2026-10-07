@@ -51,6 +51,7 @@ button:disabled { opacity: .5; cursor: default; }
 .sources li { overflow-wrap: anywhere; }
 .sources .host { color: var(--faint); font-size: 11.5px; }
 .sys.k-cancel { color: var(--text); background: color-mix(in srgb, var(--warn) 14%, var(--panel)); }
+.sys.k-house-build { overflow-wrap: anywhere; }
 .err-kind { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 6px; padding: 0 6px; color: #fff; background: var(--err); margin-right: 2px; }
 .err-kind.k-capacity { background: #d97706; }
 .err-kind.k-quota { background: #9333ea; }
@@ -146,6 +147,33 @@ button:disabled { opacity: .5; cursor: default; }
 .chat-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; font-size: 11px; color: var(--muted); }
 .chat-actions button { padding: 2px 4px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; border-radius: 8px; }
 .chat-actions button:hover, .reaction-picker summary:hover { color: var(--accent); }
+.chat-actions .handoff { color: var(--accent); font-weight: 600; }
+.play-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.play-controls form { display: flex; gap: 6px; }
+.play-controls input { width: 9em; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; }
+.play-controls small { color: var(--muted); }
+.sys.k-digest { text-align: left; max-width: 520px; margin-inline: auto; }
+.sys.k-digest .text { font-size: 12.5px; }
+.sys.k-digest .model-pill { margin-top: 6px; }
+.auto-pick { display: block; font-size: 10.5px; color: var(--muted); text-align: right; margin-top: 2px; }
+.m-doing { font-size: 11px; color: var(--accent); }
+.p-doing { font-size: 12px; color: var(--accent); margin: 2px 0 6px; }
+.p-recent { margin-top: 10px; text-align: left; }
+.p-recent ul { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 3px; font-size: 12px; }
+.p-recent time { color: var(--muted); font-size: 11px; margin-right: 4px; }
+.feature-fold { margin: 2px 0 8px; font-size: 12px; }
+.feature-fold > summary { cursor: pointer; color: var(--muted); list-style: none; padding: 2px 0; user-select: none; }
+.feature-fold > summary::before { content: "▸ "; }
+.feature-fold[open] > summary::before { content: "▾ "; }
+.feature-fold > summary:hover { color: var(--accent); }
+.feature-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin: 2px 0 8px; font-size: 12px; }
+.feature { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.feature small { color: var(--muted); font-size: 10px; }
+.feature:last-child { grid-column: span 2; white-space: nowrap; }
+.at-me { color: var(--accent); font-weight: 700; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; padding: 0 2px; }
+.recipient-hint { min-height: 16px; padding: 0 6px 2px; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recipient-hint.warn { color: var(--accent); font-weight: 600; }
+.run-handoff { margin: 4px 0 0 4px; }
 .reaction-picker { display: inline-block; }
 .reaction-picker summary { cursor: pointer; padding: 2px 4px; list-style: none; }
 .reaction-picker[open] { padding: 0 4px; border-radius: 8px; background: var(--panel-2); }
@@ -252,6 +280,10 @@ button:disabled { opacity: .5; cursor: default; }
 #autoField .field-label { white-space: nowrap; flex-shrink: 0; }
 #levelSeg { flex-wrap: nowrap; flex-shrink: 0; gap: 2px; }
 #levelSeg button { padding-inline: 5px; white-space: nowrap; }
+/* The activity levels carry emoji labels: they get their own full-width row so nothing is cut off. */
+.field:has(#levelSeg) { flex-wrap: wrap; row-gap: 6px; }
+.field:has(#levelSeg) #levelSeg { width: 100%; flex-shrink: 1; }
+.field:has(#levelSeg) #levelSeg button { flex: 1 1 auto; min-width: 0; padding-inline: 1px; font-size: 11px; letter-spacing: -0.02em; }
 .advanced { margin-top: 12px; font-size: 12.5px; }
 .advanced summary { cursor: pointer; color: var(--muted); }
 .advanced input { width: 100%; padding: 8px; margin-top: 6px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; font-family: var(--mono); color: var(--text); }

@@ -22,6 +22,31 @@
 
 ## 빠른 시작
 
+### Windows 설치 앱
+
+`AI-Chatroom-Setup-0.1.0-x64.exe`를 실행하면 시작 메뉴와 바탕화면에 **AI 단톡방** 바로가기가 생깁니다.
+아이콘을 누르면 서버와 앱 화면이 함께 시작되며, 별도 브라우저·터미널·Node.js 설치는 필요 없습니다.
+앱 창을 닫으면 서버도 종료됩니다. AI를 쓰려면 각 회사 CLI의 설치와 계정 로그인은 여전히 필요합니다.
+
+- 대화·작업공간·설정은 `%APPDATA%\AI Chatroom\room`에 보관합니다. 정확한 위치는 앱 메뉴의 **대화 데이터 폴더 열기**에서 확인할 수 있습니다.
+- 기존 소스 폴더의 대화는 그대로 남으며 자동으로 이동하지 않습니다. 설치 파일에는 개인 대화·설정·로그인 정보를 넣지 않습니다.
+- 앱을 제거해도 대화 데이터는 보존합니다. 코드 서명이 없는 설치 파일은 Windows에서 게시자 확인 경고가 나올 수 있습니다.
+- Windows 설치 앱에는 휴대폰 원격 접속 기능이 포함되어 있지 않습니다.
+
+설치 파일을 직접 만들려면 Node.js 22 이상이 있는 개발 PC에서:
+
+```sh
+npm ci
+npm test
+npm run test:desktop
+npm run dist:win
+node desktop/smoke.mjs "dist/win-unpacked/AI Chatroom.exe"
+```
+
+완성된 설치 파일은 `dist/`에 생성됩니다. `npm run desktop`으로 설치 없이 개발용 앱을 실행할 수도 있습니다.
+
+### 소스 폴더에서 실행
+
 1. **받기**: GitHub 페이지의 **Code → Download ZIP**을 받아 압축을 풀거나, `git clone https://github.com/Moris-kr/ai-chatroom.git`
 2. **설치 도우미 실행 (처음 한 번)**
    - **Windows**: 폴더에서 `setup.bat` 더블클릭
@@ -168,18 +193,9 @@ ChatGPT 그림은 `agents.gpt.imageModel`(기본 `gpt-6-luna`)로 그린다.
 
 ## 선택 기능
 
-### 밖에서 접속 (https + 비밀번호)
+### 밖에서 접속
 
-집 밖 휴대폰에서 방을 보려면 두 번째 포트를 연다. 기본은 꺼져 있다.
-
-1. `config.json`에 `"external": { "enabled": true }` → 서버 재시작.
-   처음 켤 때 비밀번호를 만들어 `data/external-password.txt`에 적는다. 바꾸려면 `node set-password.mjs`.
-2. 방화벽에서 TCP 18321 인바운드 허용.
-3. 공유기에서 외부 18321 → 이 PC 내부 IP:18321 포트포워딩.
-4. 밖에서 `https://<공인 IP>:18321` → 비밀번호. 인증서는 자체 서명이라 처음에 경고를 한 번 넘겨야 한다.
-
-로그인 실패가 많으면 잠기고, 개발자 브릿지 API는 외부 포트에서 열리지 않는다.
-**인터넷에 여는 기능이다. 비밀번호를 길게 하고, 필요 없을 땐 꺼 두자.**
+현재 서버는 로컬 접속만 허용합니다. 휴대폰 QR·PWA 원격 연결 기능은 제거했습니다.
 
 ### 개발자 브릿지 (Claude Code를 "개발자"로 방에 들이기)
 

@@ -15,6 +15,16 @@ panel.innerHTML = `
   <canvas id="hsCanvas" aria-label="AI들이 함께 짓는 집"></canvas>
   <p class="hs-empty" id="hsEmpty" hidden>아직 아무것도 없어요.<br>Talk가 켜져 있으면 AI들이 천천히 집을 짓기 시작해요.</p>
   <aside class="hs-plan" id="hsPlan" hidden><b>공동 계획</b><p id="hsPlanText"></p></aside>
+  <aside class="hs-diary" id="hsDiary" hidden aria-label="집 기록">
+    <header><b>📖 집 기록</b><div class="hs-mode" id="hsMode" role="group" aria-label="집 운영 방식">
+      <button type="button" data-mode="auto" title="AI들이 거의 모든 일을 알아서 정해요">🤖 자율</button>
+      <button type="button" data-mode="balanced" title="큰 일만 물어보고 나머지는 알아서 정해요 (기본)">⚖️ 중요만</button>
+      <button type="button" data-mode="together" title="작은 의견 차이도 한마디 할 기회를 줘요">🎮 함께</button></div></header>
+    <div class="hs-ask" id="hsAsk" hidden></div>
+    <div class="hs-undo" id="hsUndo" hidden></div>
+    <div id="hsEvents"></div>
+    <small class="hs-note">캐릭터들의 생활 기록이에요. 실제 감정이 아니라 앱이 정한 캐릭터 상태예요.</small>
+  </aside>
   <section class="hs-log" id="hsLog" aria-label="집 대화"><button type="button" id="hsLogToggle" aria-expanded="true">대화 접기 ▾</button><div id="hsLogList" aria-live="polite"></div></section>
   <p class="hs-help">드래그: 이동 · 휠: 확대/축소</p>`;
 document.body.append(panel);
@@ -88,6 +98,14 @@ function agent(id) {
   const w = ctx.measureText(name).width + 12;
   ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(sx - w / 2, cy - r - 20, w, 17, 8); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.fillText(name, sx, cy - r - 8); ctx.textAlign = 'start';
+  // What the character is doing in the lived-in house, under its feet.
+  const doing = data.phase === 'life' ? data.agents[id]?.doing : '';
+  if (doing) {
+    ctx.font = '10px "Pretendard Variable", Pretendard, system-ui, sans-serif';
+    const dw = ctx.measureText(doing).width + 10;
+    ctx.fillStyle = 'rgba(255,255,255,.88)'; ctx.beginPath(); ctx.roundRect(sx - dw / 2, sy + 4, dw, 15, 7); ctx.fill();
+    ctx.fillStyle = '#1b1f2a'; ctx.textAlign = 'center'; ctx.fillText(doing, sx, sy + 15); ctx.textAlign = 'start';
+  }
   const b = bubbles[id];
   if (b && b.until > Date.now()) bubble(b.text, sx, cy - r - 26, color);
 }
@@ -142,9 +160,54 @@ function fit() {
   cam.y = -((Math.max(...ys) + Math.min(...ys)) / 2 - cy) * cam.s;
 }
 
+async function send(route, body) {
+  const res = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const value = await res.json();
+  if (!res.ok || value.error) throw new Error(value.error || `요청 실패 (${res.status})`);
+  data = value; renderSide();
+}
+const day = (at) => new Date(at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
+const time = (at) => new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+let diaryKey = '';
+function renderDiary() {
+  const life = data.phase === 'life';
+  $('#hsDiary').hidden = !life;
+  if (!life) return;
+  const key = JSON.stringify([data.mode, data.open, data.undo, data.events.map((e) => e.id)]);
+  if (key === diaryKey) return;
+  diaryKey = key;
+  $('#hsMode').querySelectorAll('[data-mode]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === data.mode)));
+  // An open matter the owner may (but need not) step into; the AIs settle it on their own otherwise.
+  const ask = data.open?.ask;
+  $('#hsAsk').hidden = !ask;
+  if (ask) {
+    $('#hsAsk').innerHTML = `<p>${esc(data.open.text)}</p><small>${time(ask.deadline)}까지 아무것도 안 하면 AI들이 알아서 정해요.</small>
+      <div><button type="button" data-decide="ai">AI들에게 맡기기</button><button type="button" data-say>내가 한마디 하기</button></div>
+      <form hidden><input maxlength="60" placeholder="예: 창가 쪽으로 두자" aria-label="방장 한마디"><button type="submit">정하기</button></form>`;
+    $('#hsAsk').querySelector('[data-decide]').onclick = () => send('/api/house/decide', { choice: 'ai' }).catch((e) => alert(e.message));
+    $('#hsAsk').querySelector('[data-say]').onclick = () => { const f = $('#hsAsk form'); f.hidden = false; f.querySelector('input').focus(); };
+    $('#hsAsk form').onsubmit = (e) => { e.preventDefault(); send('/api/house/decide', { choice: 'owner', note: e.target.querySelector('input').value }).catch((err) => alert(err.message)); };
+  }
+  $('#hsUndo').hidden = !data.undo;
+  if (data.undo) {
+    $('#hsUndo').innerHTML = `<span>${esc(data.undo.text)}</span><button type="button">되돌리기</button>`;
+    $('#hsUndo').querySelector('button').onclick = () => send('/api/house/undo', {}).catch((e) => alert(e.message));
+  }
+  let last = '';
+  $('#hsEvents').innerHTML = data.events.slice().reverse().map((e) => {
+    const head = day(e.at) !== last ? `<div class="hs-day">${esc(day(e.at))}</div>` : '';
+    last = day(e.at);
+    return `${head}<div class="hs-event ${esc(e.tone || '')}"><time>${time(e.at)}</time> ${esc(e.text)}</div>`;
+  }).join('') || '<div class="hs-event">아직 기록된 일이 없어요.</div>';
+}
+$('#hsMode').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mode]');
+  if (b) send('/api/house/mode', { mode: b.dataset.mode }).catch((err) => alert(err.message));
+});
 function renderSide() {
-  const talk = data.talk ? (data.busy ? '지금 짓는 중…' : `Talk 켜짐 · 다음 작업 ${Math.max(1, Math.round((data.nextAt - Date.now()) / 60000))}분 뒤쯤`) : 'Talk 꺼짐 · 켜면 이어서 지어요';
-  $('#hsStatus').textContent = `가구 ${data.items.length}개 · 작업 ${data.turns}번 · ${talk}`;
+  renderDiary();
+  const talk = data.talk ? (data.busy ? '지금 짓는 중…' : data.phase === 'life' ? 'Talk 켜짐 · 생활 중' : `Talk 켜짐 · 다음 작업 ${Math.max(1, Math.round((data.nextAt - Date.now()) / 60000))}분 뒤쯤`) : 'Talk 꺼짐 · 켜면 다시 움직여요';
+  $('#hsStatus').textContent = `${data.phase === 'life' ? '🏠 생활 중' : '🔨 짓는 중'} · 가구 ${data.items.length}개 · ${talk}`;
   $('#hsEmpty').hidden = !!(data.floors.length || data.walls.length || data.items.length);
   $('#hsPlan').hidden = !data.plan;
   $('#hsPlanText').textContent = data.plan;
@@ -152,7 +215,8 @@ function renderSide() {
   if (next === logKey) return;
   logKey = next;
   const list = $('#hsLogList');
-  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${l.kind}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(data.names[l.id] || l.id)}</b> ${l.kind === 'build' ? '🔨 ' : ''}${esc(l.text)}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
+  const who = (id) => data.names[id] || (id === 'user' ? data.userName : id === 'house' ? '🏠 집' : id);
+  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${l.kind}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(who(l.id))}</b> ${l.kind === 'build' ? '🔨 ' : ''}${esc(l.text)}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
   list.scrollTop = list.scrollHeight;
 }
 function noteBubbles(first) {

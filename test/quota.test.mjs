@@ -143,7 +143,7 @@ test('일반 채팅에서 한도가 소진되어도 동료 응답은 완료되�
   const s = await start(root, undefined, { reply: (id) => id === 'gpt'
     ? { ok: false, detail: 'usage limit reached' } : { ok: true, text: '응답' } });
   try {
-    assert.equal((await s.post('/api/send', { text: '안녕' })).status, 200);
+    assert.equal((await s.post('/api/send', { text: '얘들아 안녕' })).status, 200); // both AIs answer, so one can run out while the other completes
     await s.app.active?.done;
     assert.equal(s.view().room.quotaRest.gpt.autoResume, true);
     assert.ok(s.view().messages.some((m) => m.from === 'claude' && m.text === '응답'));
