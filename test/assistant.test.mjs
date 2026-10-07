@@ -344,7 +344,7 @@ async function enableAuto(s, level = 'low') {
   await s.post('/api/room', { auto: { on: true, level } });
 }
 const baseTime = () => new Date(2026, 5, 10, 8, 0, 0).getTime();
-test('보통은 5~10분 간격에 4차례씩 대화하고 하루 30회에서 멈춘다', async () => {
+test('보통은 5~10분 간격에 4차례씩 대화하고 하루 100회에서 멈춘다', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-medium-'));
   const clock = { t: baseTime() }; const adapter = autoAdapter();
   let s = await startAuto(root, adapter, clock);
@@ -357,14 +357,21 @@ test('보통은 5~10분 간격에 4차례씩 대화하고 하루 30회에서 멈
     assert.equal(adapter.log.auto, 4);
     clock.t += 0.5 * 60000; await s.app.tick();
     assert.equal(adapter.log.auto, 8);
-    for (let i = 0; i < 6; i++) { clock.t += 12 * 60000; await s.app.tick(); }
-    assert.equal(adapter.log.auto, 30);
+    for (let i = 0; i < 23; i++) {
+      // User participation resets the separate runaway guard, not the daily budget.
+      if (i === 10) {
+        assert.equal((await s.post('/api/send', { text: '@GPT 안녕' })).status, 200);
+        await s.app.active?.done;
+      }
+      clock.t += 12 * 60000; await s.app.tick();
+    }
+    assert.equal(adapter.log.auto, 100);
     const view = await s.state();
-    assert.equal(view.room.autoDaily, 30); assert.equal(view.room.auto.usage.calls, 30);
+    assert.equal(view.room.autoDaily, 100); assert.equal(view.room.auto.usage.calls, 100);
     assert.equal(view.room.autoRest, true);
-    clock.t += 12 * 60000; await s.app.tick(); assert.equal(adapter.log.auto, 30);
+    clock.t += 12 * 60000; await s.app.tick(); assert.equal(adapter.log.auto, 100);
     await s.app.close(); s = await startAuto(root, adapter, clock);
-    assert.equal((await s.state()).room.auto.usage.calls, 30);
+    assert.equal((await s.state()).room.auto.usage.calls, 100);
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 test('자동 잠들기는 기본 30분, 재시작·조회로 깨지 않고 유효한 메시지로 깨어난다', async () => {
@@ -537,8 +544,8 @@ test('자동 호출은 하루 상한에서 멈추고, 재시작해도 같은 날
     await enableAuto(s);
     await s.app.tick(); assert.equal(adapter.log.auto, 0); // too early
     for (let i = 0; i < 4; i++) { clock.t += 2 * HOUR; await s.app.tick(); }
-    assert.equal(adapter.log.auto, 8); // rounds of 3 turns until the daily limit of the 낮음 level
-    const usage = (await s.state()).room.auto.usage; assert.equal(usage.calls, 8);
+    assert.equal(adapter.log.auto, 10); // rounds of 3 turns until the daily limit of the 낮음 level
+    const usage = (await s.state()).room.auto.usage; assert.equal(usage.calls, 10);
     const spoken = s.app.store.messages.filter((m) => m.auto === 'call');
     // light models picked by the app (Claude: haiku, GPT: the one the Codex list calls affordable), lowest effort at 낮음
     assert.ok(spoken.every((m) => m.text.endsWith('짧은 말') && m.effort === 'low' && m.model === (m.from === 'claude' ? 'haiku' : 'gpt-6-luna')));
@@ -546,12 +553,12 @@ test('자동 호출은 하루 상한에서 멈추고, 재시작해도 같은 날
     assert.ok(spoken.every((m, i) => i === 0 || m.from !== spoken[i - 1].from)); // they alternate
     await s.app.close();
     s = await startAuto(root, adapter, clock);
-    assert.equal((await s.state()).room.auto.usage.calls, 8);
+    assert.equal((await s.state()).room.auto.usage.calls, 10);
     clock.t += 2 * HOUR; await s.app.tick();
-    assert.equal(adapter.log.auto, 8);
+    assert.equal(adapter.log.auto, 10);
     // next day the count starts again (a new round of 3 turns)
     clock.t += 24 * HOUR; await s.app.tick();
-    assert.equal((await s.state()).room.auto.usage.calls, 3); assert.equal(adapter.log.auto, 11);
+    assert.equal((await s.state()).room.auto.usage.calls, 3); assert.equal(adapter.log.auto, 13);
     // a higher level asks for more reasoning, more turns per round and a higher daily limit
     await s.post('/api/room', { auto: { level: 'high' } });
     assert.equal((await s.state()).room.autoDaily, 200);

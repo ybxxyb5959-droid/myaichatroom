@@ -20,7 +20,10 @@
 .hs-log { position: absolute; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); display: grid; gap: 4px; }
 .hs-log > button { justify-self: start; padding: 4px 12px; border-radius: 9px; border: 1px solid var(--line, #0002); background: color-mix(in srgb, var(--panel, #fff) 92%, transparent); color: var(--text, inherit); font: inherit; font-size: 12px; cursor: pointer; }
 #hsLogList { max-height: 34vh; overflow: auto; padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
-#hsLogList[hidden] { display: none; }
+#hsLogList[hidden], #hsChat[hidden] { display: none; }
+#hsChat { display: flex; gap: 4px; }
+#hsChat input { flex: 1; min-width: 0; padding: 7px 12px; border-radius: 12px; border: 1px solid var(--line, #0002); background: color-mix(in srgb, var(--panel, #fff) 92%, transparent); color: var(--text, inherit); font: inherit; font-size: 13px; }
+#hsChat button { padding: 4px 12px; border-radius: 12px; border: 1px solid var(--line, #0002); background: color-mix(in srgb, var(--panel, #fff) 92%, transparent); color: var(--text, inherit); font: inherit; font-size: 12px; cursor: pointer; }
 .hs-line { margin: 3px 0; overflow-wrap: anywhere; animation: hs-pop .22s ease-out; }
 .hs-line.build { color: var(--muted, #667); font-size: 12px; }
 .hs-help { position: absolute; right: 14px; bottom: 12px; margin: 0; font-size: 12px; color: var(--muted, #667); }
@@ -49,13 +52,18 @@
 .hs-tools button { padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line, #0002); background: var(--panel, #fff); color: var(--text, #1b1f2a); cursor: pointer; font: inherit; font-size: 12px; }
 .hs-tools button[aria-pressed="true"] { background: var(--accent, #1f9d74); color: white; }
 .hs-tools button:disabled { opacity: .5; cursor: default; }
-.hs-cameras { position: absolute; z-index: 2; right: 12px; bottom: 42px; width: min(440px, 42vw); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.hs-cameras[hidden], .hs-error[hidden] { display: none; }
-.hs-cameras button { padding: 0; overflow: hidden; border: 2px solid #ffffff55; border-radius: 10px; background: #171c24; color: white; text-align: left; cursor: pointer; min-width: 0; }
-.hs-cameras button[aria-pressed="true"] { border-color: #52d9ab; }
-.hs-cameras canvas { display: block; width: 100%; aspect-ratio: 16 / 9; }
-.hs-cameras span { display: block; padding: 5px 8px; font-size: 11px; }
-.hs-cameras small { color: #9bd6bc; float: right; font-size: 9px; }
+.hs-error[hidden] { display: none; }
+.hs-follow { display: flex; gap: 6px; }
+.hs-follow button { display: flex; align-items: center; gap: 5px; padding: 3px 9px 3px 4px; }
+.hs-follow img { width: 22px; height: 22px; border-radius: 50%; background: #fff; object-fit: cover; }
+#hsProgress[hidden] { display: none; }
+.hs-progress { position: absolute; z-index: 2; right: 12px; bottom: 42px; width: min(300px, calc(100vw - 24px)); max-height: 52vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
+#hsProgress button { display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; width: 100%; margin-top: 5px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line, #0002); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+#hsProgress em { font-style: normal; font-size: 11px; }
+#hsProgress small { grid-column: 1 / -1; color: var(--muted, #667); font-size: 10.5px; }
+.hs-bar-all, .hs-bar-room { height: 6px; border-radius: 3px; background: #0002; overflow: hidden; margin-top: 4px; }
+.hs-bar-room { grid-column: 1 / -1; height: 4px; margin: 2px 0; }
+.hs-bar-all i, .hs-bar-room i { display: block; height: 100%; background: var(--accent, #1f9d74); transition: width .4s; }
 .hs-error { position: absolute; z-index: 4; top: 45%; left: 50%; transform: translateX(-50%); padding: 14px; border-radius: 12px; background: #fff0e9; color: #923b22; max-width: 90vw; }
 .hs-selected-event { margin: 8px 0; padding: 8px; border: 1px solid var(--accent, #1f9d74); border-radius: 9px; }
 .hs-selected-event[hidden] { display: none; }
@@ -69,10 +77,8 @@
   .hs-tools { top: 76px; left: 6px; right: 6px; gap: 4px; }
   .hs-tools button { padding: 6px 8px; font-size: 11px; }
   .hs-plan { top: 116px; left: 6px; width: calc(50vw - 12px); max-height: 16vh; padding: 8px; font-size: 11px; }
+  .hs-progress { right: 6px; bottom: 8px; width: calc(50vw - 12px); max-height: 30vh; padding: 8px; font-size: 11px; }
   .hs-diary { top: 116px; right: 6px; width: calc(50vw - 12px); max-height: 20vh; padding: 8px; }
-  .hs-cameras { right: 6px; bottom: 8px; width: calc(100vw - 12px); gap: 4px; }
-  .hs-cameras canvas { max-height: 12vh; }
-  .hs-cameras small { float: none; margin-left: 4px; font-size: 8px; }
   .hs-log { bottom: calc(24vh + 76px); left: 6px; width: min(320px, calc(100vw - 12px)); }
   #hsLogList { max-height: 13vh; font-size: 11px; }
 }

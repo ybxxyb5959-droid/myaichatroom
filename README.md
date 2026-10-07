@@ -182,7 +182,7 @@ ChatGPT 그림은 `agents.gpt.imageModel`(기본 `gpt-6-luna`)로 그린다.
 
 ### 프사 바꾸기
 
-`public/avatars/<id>.webp`(512px)와 `<id>-128.webp`(128px)를 내 그림으로 바꾸고, `config.json`에 외형을 적어 준다.
+`public/avatars/<id>-pixel.png`(512px)와 `<id>-pixel-128.png`(128px)를 내 그림으로 바꾸고, `config.json`에 외형을 적어 준다.
 멤버들은 서로의 프사 외형을 이 설명으로만 안다(그림을 그릴 때 외모 참고로는 그림 파일 자체를 쓴다).
 
 ```json

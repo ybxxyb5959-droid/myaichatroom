@@ -1,6 +1,7 @@
 // Block characters with shoulder/elbow and hip/knee pivots for future poses.
 export function createBlockAvatar(THREE, mesh, color) {
-  const group = new THREE.Group(), joints = {};
+  const root = new THREE.Group(), group = new THREE.Group(), joints = {};
+  root.add(group);
   const skin = '#ead0ae';
   const part = (parent, x, y, z, w, h, d, c) => mesh('box', x, y, z, w, h, d, c, parent);
   const pivot = (parent, name, x, y, z) => {
@@ -27,10 +28,13 @@ export function createBlockAvatar(THREE, mesh, color) {
     part(knee, -.12, -.27, -.13, .24, .27, .26, '#36445a');
     part(knee, -.13, -.34, -.16, .26, .09, .38, '#252b34');
   }
-  return { group, joints };
+  return { group: root, body: group, joints };
 }
 
-export function animateBlockAvatar(rig, seconds, walking) {
+export function animateBlockAvatar(rig, seconds, walking, pose = '') {
+  rig.body.rotation.x = !walking && pose === 'lie' ? -Math.PI / 2 : 0;
+  rig.body.position.set(0, !walking && pose === 'sit' ? -.7 : !walking && pose === 'lie' ? .3 : 0,
+    !walking && pose === 'lie' ? 1 : 0);
   const swing = walking ? Math.sin(seconds * 9) : 0;
   for (const [side, sign] of [['left', 1], ['right', -1]]) {
     rig.joints[`${side}Hip`].rotation.x = sign * swing * .45;
@@ -40,4 +44,14 @@ export function animateBlockAvatar(rig, seconds, walking) {
     rig.joints[`${side}Elbow`].rotation.x = .08 + (walking ? Math.abs(swing) * .12 : 0);
   }
   rig.joints.head.rotation.y = walking ? 0 : Math.sin(seconds * .7) * .06;
+  if (!walking && pose === 'sit') {
+    for (const side of ['left', 'right']) {
+      rig.joints[`${side}Hip`].rotation.x = -Math.PI / 2;
+      rig.joints[`${side}Knee`].rotation.x = Math.PI / 2;
+    }
+  }
+  if (!walking && pose === 'wave') {
+    rig.joints.rightShoulder.rotation.z = -2.4 + Math.sin(seconds * 12) * .2;
+    rig.joints.rightElbow.rotation.x = -.4;
+  }
 }

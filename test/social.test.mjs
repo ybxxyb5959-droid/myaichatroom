@@ -12,6 +12,7 @@ test('social controls are stripped, validated, and default to work', () => {
     text: '안녕', kind: 'chat', reaction: { id: 12, emoji: '👍' }, imagePrompt: '',
   });
   assert.equal(socialOutput('자료 조사해줘').kind, 'work');
+  assert.deepEqual(socialOutput('ㅎㅇ 용빈! 👋 [대화유형] 잡담'), { text: 'ㅎㅇ 용빈! 👋', kind: 'chat', reaction: null, imagePrompt: '' });
   assert.equal(socialOutput('[공감] 12 <script>').reaction, null);
   assert.equal(socialOutput('설명\n[이미지요청] 고양이').imagePrompt, '');
   assert.equal(socialOutput('[대화유형] 이미지\n[이미지요청] 고양이').imagePrompt, '고양이');

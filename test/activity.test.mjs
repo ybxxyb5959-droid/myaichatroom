@@ -334,7 +334,7 @@ test('chat answers, Talk rounds and member activity are recorded without extra A
   assert.ok(states.every((text) => text === '💬 Talk에서 말하는 중'), states.join(' / '));
   const view = s.app.view();
   assert.equal(view.room.auto.usage.calls, LEVELS.low.turns);
-  assert.equal(view.room.autoDaily, 8, 'the quiet level keeps its daily cap of 8');
+  assert.equal(view.room.autoDaily, 10, 'the quiet level has a daily cap of 10');
   entries = (await s.get('/api/activity?kind=talk')).entries;
   assert.equal(entries.length, 1);
   assert.match(entries[0].text, /Talk 대화 \(3마디\)/);
@@ -427,8 +427,8 @@ test('activity selection cannot be configured, old switches are ignored, and hou
   assert.equal(notices[0].from, 'system');
   assert.equal(notices[0].by, s.adapter.calls.find((c) => c.house).id);
   assert.equal(notices[0].text, '바닥 놓음 4칸 (2,2–3,3)');
-  // A plain line is only shared now and then (30%; the dice here is 0.5), so it stays in the house log.
-  assert.equal(s.app.store.messages.filter((m) => m.kind === 'house-say').length, 0);
+  // Every builder line is shared in the chat.
+  assert.equal(s.app.store.messages.filter((m) => m.kind === 'house-say').length, 1);
   clock.t += 60 * 60000;
   for (let i = 0; i < 40 && s.adapter.calls.filter((c) => c.house).length < 2; i++) await new Promise((r) => setTimeout(r, 25));
   await new Promise((r) => setTimeout(r, 50));

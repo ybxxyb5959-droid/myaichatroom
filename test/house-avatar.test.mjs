@@ -40,3 +40,17 @@ test('event cards escape text and render a check-in button only for a valid even
   assert.match(houseEventHTML('Claude와 Gemini가 티격태격함', 7), /data-house-event="7">확인하러 가기/);
   assert.equal(houseEventHTML('hi', '"><script>'), '<span>🏠 hi</span>');
 });
+
+test('sitting bends knees, lying rotates the body, waving raises an arm and walking resets poses', () => {
+  const rig = createBlockAvatar(THREE, mesh, '#199b78');
+  animateBlockAvatar(rig, 0, false, 'sit');
+  assert.equal(rig.joints.leftHip.rotation.x, -Math.PI / 2);
+  assert.equal(rig.joints.leftKnee.rotation.x, Math.PI / 2);
+  animateBlockAvatar(rig, 0, false, 'lie');
+  assert.equal(rig.body.rotation.x, -Math.PI / 2);
+  animateBlockAvatar(rig, 0, false, 'wave');
+  assert.ok(rig.joints.rightShoulder.rotation.z < -2);
+  animateBlockAvatar(rig, 0, true);
+  assert.equal(rig.body.rotation.x, 0);
+  assert.deepEqual(rig.body.position.toArray(), [0, 0, 0]);
+});

@@ -11,16 +11,6 @@ export function houseBounds(data) {
     span: Math.max(6, maxX - minX, maxZ - minZ) };
 }
 
-export function cameraViews(bounds) {
-  const { x, z, span } = bounds;
-  const reach = span * .55;
-  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([dx, dz], i) => ({
-    name: `CCTV ${i + 1}`,
-    position: [x + dx * reach, Math.max(3.5, span * .45), z + dz * reach],
-    target: [x, .6, z],
-  }));
-}
-
 export function furnitureParts(data) {
   return data.items.flatMap((item) => {
     const def = data.defs[item.def];

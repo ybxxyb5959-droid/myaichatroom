@@ -130,13 +130,13 @@ test('게임 하루 1개 제한은 재시작 후에도 유지되고 다음 날 �
 test('남은 자동 호출이 3회 미만이면 게임을 시작하지 않는다', async () => {
   const root = temp(); const log = fresh(); const store = new Store(root);
   const clock = { t: new Date(2026, 9, 6, 8).getTime() };
-  store.state.assistant = { auto: { usage: { day: '2026-10-06', calls: 5 } } };
+  store.state.assistant = { auto: { usage: { day: '2026-10-06', calls: 7 } } };
   const s = await start(root, log, { store, clock: () => clock.t });
   try {
     await s.post('/api/room', { auto: { on: true } });
     clock.t += 20000; await s.app.tick();
     assert.equal(log.gameCalls, 0); assert.equal((await s.state()).files.length, 0);
-    assert.equal((await s.state()).room.auto.usage.calls, 6);
+    assert.equal((await s.state()).room.auto.usage.calls, 8);
   } finally { await s.app.close(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 

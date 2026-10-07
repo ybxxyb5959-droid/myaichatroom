@@ -7,4 +7,5 @@ test('automatic conversation intervals match the requested ranges at every activ
   assert.deepEqual(LEVELS.low.callMs, [15 * minute, 25 * minute]);
   assert.deepEqual(LEVELS.medium.callMs, [5 * minute, 10 * minute]);
   assert.deepEqual(LEVELS.high.callMs, [2 * minute, 5 * minute]);
+  assert.deepEqual([LEVELS.low.daily, LEVELS.medium.daily, LEVELS.high.daily], [10, 100, 200]);
 });

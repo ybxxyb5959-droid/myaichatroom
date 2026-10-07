@@ -26,6 +26,7 @@ import { checkGame } from './lib/gamecheck.mjs';
 import { EMOJIS, BIO_INTERVAL } from './lib/social.mjs';
 import { latestCall, quotaOf } from './public/status.mjs';
 import { House, HOUSE_BRIEF, parseHouseReply } from './lib/house.mjs';
+import { playerView, playerAction } from './lib/house-player.mjs';
 import { isComplete, enterLife, lifeBeat, lifeEvent, drift, snapshot, markUndo, undo as undoHouse, decide as decideHouse, setMode as setHouseMode, relationHint, eventChatter, LIFE_PACE, EVENT_GAP } from './lib/life.mjs';
 import { chooseShare, captionFor, renderShare, SHARE_GAP } from './lib/lifeshare.mjs';
 import { todayDigest, buildNote, NOTE_GAP, TODAY_QUESTION } from './lib/digest.mjs';
@@ -243,6 +244,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     recordSuccess(saved);
     persist();
     broadcast('message', saved);
+    // The house conversation shows what the owner and the AIs say in the chat (house lines are already there).
+    if ((saved.from === 'user' || IDS.includes(saved.from)) && saved.kind !== 'house-say' && saved.text) {
+      house.s.log.push({ kind: 'say', id: saved.from, text: saved.text.slice(0, 200), at: saved.ts });
+      house.save(); broadcast('house', {});
+    }
     return saved;
   };
   // Each entry says where it comes from; only the Codex list is reported by the CLI itself,
@@ -499,7 +505,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   // auto model did not fail in the last 30 minutes. The first auto call is the real test.
   // A member whose known remaining usage is under 20% starts no new spontaneous call (Talk, house turns);
   // it still answers the user and still lives in the house with no-call actions.
-  function eligibleAuto() {
+  // `headroom: false` (house turns) skips the extra minPct of 활발하게, so the whole family builds together.
+  function eligibleAuto({ headroom = true } = {}) {
     const reports = usageView();
     const minPct = LEVELS[room.auto.level].minPct || 0; // the freest level wants more headroom (known usage only)
     return IDS.filter((id) => {
@@ -507,7 +514,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const quota = quotaOf(id, reports?.[id], clock());
       return room.enabled[id] && !room.quotaRest[id] && available[id] && room.checks[id].login?.status !== 'fail'
         && !(call?.status === 'fail' && clock() - call.at < (TRANSIENT.has(call.kind) ? BRIEF_REST_MS : LASTING_REST_MS))
-        && !quota.low && !(minPct && quota.known && quota.pct < minPct);
+        && !quota.low && !(headroom && minPct && quota.known && quota.pct < minPct);
     });
   }
   // What the server is actually doing about a member's errors, for the UI to show as is (it keeps no
@@ -796,7 +803,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (closed || houseJob || now < houseAt || !room.auto.on || autoSleeping() || active || autoJob) return Promise.resolve();
     const pace = HOUSE_PACE[room.auto.level];
     const usage = usageFor(room.auto, now);
-    const order = IDS.filter((id) => eligibleAuto().includes(id));
+    const order = eligibleAuto({ headroom: false });
     if (!order.length || usage.stopped || usage.calls >= LEVELS[room.auto.level].daily || (usage.house || 0) >= pace.daily) return Promise.resolve();
     // The teammate the last builder called with @ goes next; otherwise they take turns.
     const id = houseNext && houseNext !== house.s.lastActor && order.includes(houseNext) ? houseNext : order[(order.indexOf(house.s.lastActor) + 1) % order.length];
@@ -830,15 +837,14 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       // is sometimes a reply to the teammate's last shared line and sometimes not.
       if (turn.say) {
         // Nobody is called who is resting (limit, off, sign-in): that @ would go unanswered, so it is shown as a plain name.
-        const awake = eligibleAuto();
+        const awake = eligibleAuto({ headroom: false });
         turn.say = turn.say.replace(/@([A-Za-z가-힣]+)/g, (m, word) => (mentionedTargets(m).some((target) => !awake.includes(target)) ? word : m));
         const called = mentionedTargets(turn.say).find((target) => target !== id && awake.includes(target)) || null;
         houseNext = called;
-        if (random() < (called ? 0.8 : 0.3)) {
-          const last = store.messages.findLast((m) => m.kind === 'house-say');
-          const reply = last && last.from !== id && clock() - last.ts < 10 * 60000 && random() < 0.4 ? last : null;
-          post({ from: id, kind: 'house-say', auto: 'house', text: turn.say, ...replyFields(reply) });
-        }
+        // Every line is shared as a reply to the teammate's last line, so the builders' discussion reads as a conversation.
+        const last = store.messages.findLast((m) => m.kind === 'house-say');
+        const reply = last && last.from !== id && clock() - last.ts < 10 * 60000 ? last : null;
+        post({ from: id, kind: 'house-say', auto: 'house', text: turn.say, ...replyFields(reply) });
       }
       if (turn.done.length || turn.say) record({ kind: 'house', actors: [id], ref: { houseTurn: house.s.turns },
         text: turn.done.length ? `${nameOf(id)} 집 작업: ${summary || '이동'}` : `${nameOf(id)}가 집에서 한마디` });
@@ -869,10 +875,27 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     post({ from: 'system', kind: 'house-event', text: event.text,
       houseEvent: { id: event.id, actors: event.actors, tone: event.tone } });
   }
+  // While the house is being built, members who are not building right now stroll around it, so nobody stands still.
+  const strollAt = {};
+  function buildStroll(now) {
+    let moved = false;
+    for (const id of IDS) {
+      if (!room.enabled[id] || now < (strollAt[id] ?? 0)) continue;
+      strollAt[id] = now + between([8000, 20000]);
+      if (houseJob?.actor === id) continue;
+      if (house.wander(id, random)) moved = true;
+    }
+    if (!moved) return null;
+    house.save(); broadcast('house', {});
+    return null;
+  }
   function lifeTick() {
     const now = clock();
     if (closed || !room.auto.on || autoSleeping()) return null;
-    if (house.s.phase !== 'life') { if (isComplete(house)) startLife(); else return null; }
+    if (house.s.phase !== 'life') {
+      if (!isComplete(house)) return buildStroll(now);
+      startLife();
+    }
     const done = [];
     for (const id of IDS) {
       const mode = MIRROR[appActivity(id).kind] || 'free';
@@ -993,7 +1016,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve(); }
     signal.addEventListener('abort', done, { once: true });
   });
-  const houseView = () => ({ ...house.view(), talk: room.auto.on && !autoSleeping(), level: room.auto.level, nextAt: houseAt, busy: !!houseJob, names: houseNames, userName: room.userName });
+  const houseView = () => ({ ...house.view(), player: playerView(house), talk: room.auto.on && !autoSleeping(), level: room.auto.level, nextAt: houseAt, busy: !!houseJob, names: houseNames, userName: room.userName });
   const houseTimer = setInterval(() => {
     try { lifeTick(); } catch (e) { store.log('house', redact(e.message)); }
     try { funTick(); } catch (e) { store.log('life', redact(e.message)); }
@@ -1255,6 +1278,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         }
         // The owner steps into house life only when they want to: answer an open matter, undo the latest
         // automatic change, or choose how often the house asks. Nothing here calls an AI.
+        if (p === '/api/house/player') {
+          playerAction(house, body, houseNames, clock());
+          broadcast('house', {});
+          return json(res, 200, houseView());
+        }
         if (p === '/api/house/decide') {
           decideHouse(house, body.choice, body.note, body.eventId ?? null);
           const event = lifeEvent(house, { ids: IDS.filter((id) => room.enabled[id] && available[id]), names: houseNames, rand: random, now: clock() });
@@ -1361,8 +1389,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       const rel = p === '/' ? 'index.html' : p.slice(1);
       if (rel === 'vendor/three.module.js') return await serve(res, path.join(ROOT, 'node_modules/three/build/three.module.js'));
       // Only current UI assets are served. Old game and developer pages are disabled.
-      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css', 'house.js', 'house.css', 'house-shape.mjs', 'house-view.mjs', 'house-scene.mjs', 'house-avatar.mjs', 'recipients.mjs'].includes(rel)
-        && !/^avatars\/(?:(claude|gpt|gemini)(?:(-128)?\.webp|-pixel(-128)?\.png))$/.test(rel)) return json(res, 404, { error: '파일이 없습니다.' });
+      if (!['index.html', 'assistant.js', 'format.mjs', 'status.mjs', 'assistant.css', 'style.css', 'house.js', 'house.css', 'house-shape.mjs', 'house-view.mjs', 'house-scene.mjs', 'house-avatar.mjs', 'house-pose.mjs', 'house-controls.mjs', 'recipients.mjs'].includes(rel)
+        && !/^avatars\/(?:(claude|gpt|gemini)-pixel(-128)?\.png)$/.test(rel)) return json(res, 404, { error: '파일이 없습니다.' });
       return await serve(res, path.join(ROOT, 'public', rel));
     } catch (e) {
       if (!res.headersSent) json(res, e.code === 'ENOENT' ? 404 : 400, { error: e.message });

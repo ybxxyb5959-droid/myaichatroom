@@ -329,7 +329,7 @@ const restText = (room) => (room.auto.usage.calls >= room.autoDaily ? '오늘 �
 function renderRoomSub() {
   const room = state.room;
   $('#roomSub').textContent = room.active || pending ? (room.discussion ? '토론하는 중...' : '입력중...')
-    : room.auto.on ? (room.autoSleeping ? '잠든 중 · 말 걸면 깨어나요' : room.autoRest ? restText(room) : room.autoRunning ? '켜져 있음 · 대화 중' : '켜져 있음') : '꺼져 있음';
+    : room.auto.on ? (room.autoSleeping ? '잠들어 있어요 · 말 걸면 깨어나요' : room.autoRest ? restText(room) : room.autoRunning ? '켜져 있음 · 대화 중' : '켜져 있음') : '꺼져 있음';
 }
 // Models in use: the discussion group has its own, everything else uses the normal chat models.
 const bag = () => (state.room.discussion ? state.room.debateModels : state.room.models);
@@ -451,7 +451,7 @@ function renderControls() {
   document.title = room.name || 'AI 단톡방';
   $('#webSearch').checked = room.webSearch;
   $('#webHint').hidden = !room.webSearch; // the note about search support only matters once it is on
-  $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요' : '채팅을 입력하세요 · AI 이름을 부르면 그 AI가 답해요';
+  $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요' : '채팅을 입력하세요.';
   renderRoomSub();
   $('#headTitle').textContent = room.name || 'AI 단톡방';
   $('#roomName').textContent = room.name || 'AI 단톡방';
@@ -496,7 +496,7 @@ function renderAuto() {
   $('#levelSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.level === a.level));  $('#levelHint').textContent = LEVEL_HINTS[a.level];
   $('#levelHint').title = '';
   // Only a problem is worth a line here; the rest is explained by the tour and under "자세히".
-  const note = !a.on ? '' : state.room.autoSleeping ? '잠든 중이에요. 말 걸면 다시 깨어나요.' : state.room.autoRest ? `${restText(state.room)}.` : !state.room.autoReady ? '대화할 수 있는 AI가 없어 짧은 대사만 나와요.' : '';
+  const note = !a.on ? '' : state.room.autoSleeping ? '잠들어 있어요. 말 걸면 다시 깨어나요.' : state.room.autoRest ? `${restText(state.room)}.` : !state.room.autoReady ? '대화할 수 있는 AI가 없어 짧은 대사만 나와요.' : '';
   $('#autoNote').textContent = note;
   $('#autoNote').hidden = !note;
 }

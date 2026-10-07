@@ -1,5 +1,6 @@
 // The house UI keeps its existing API and saved grid; only its visual view changes.
 import { esc } from './format.mjs';
+import { bindHouseControls } from './house-controls.mjs';
 
 const COLORS = { claude: '#d97a3a', gpt: '#2f7cf6', gemini: '#5b6cf0' };
 const panel = document.createElement('section');
@@ -7,19 +8,17 @@ panel.id = 'house'; panel.className = 'house'; panel.hidden = true;
 panel.setAttribute('aria-label', '집');
 panel.innerHTML = `
   <header class="hs-bar"><b>집</b><span id="hsStatus" role="status"></span><button type="button" id="hsClose" aria-label="집 닫고 채팅방으로" title="채팅방으로"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></header>
-  <canvas id="hsCanvas" aria-label="AI들이 함께 짓는 3D 집"></canvas>
+  <canvas id="hsCanvas" tabindex="0" aria-label="AI들이 함께 짓는 3D 집. 완성 후 방향키로 이동, E키로 상호작용"></canvas>
   <nav class="hs-tools" aria-label="집 시점">
-    <button type="button" id="hsOverview" aria-pressed="true">집 전체</button>
-    <button type="button" id="hsReset">시점 초기화</button>
+    <button type="button" id="hsReset" aria-pressed="true">집 전체</button>
     <button type="button" id="hsPhoto" disabled>사진 저장</button>
-    <button type="button" id="hsCameras" aria-expanded="true">CCTV 접기</button>
+    <button type="button" id="hsPlayer" hidden>내 캐릭터</button>
+    <span class="hs-follow" id="hsFollow" role="group" aria-label="캐릭터 따라가기">${Object.keys(COLORS).map((id) => `<button type="button" data-follow="${id}" aria-pressed="false" title="이 캐릭터를 따라가요"><img src="/avatars/${id}-pixel-128.png" alt=""><span></span></button>`).join('')}</span>
   </nav>
-  <section class="hs-cameras" id="hsCameraList" aria-label="실시간 가상 CCTV">
-    ${[1, 2, 3, 4].map((n) => `<button type="button" data-camera="${n - 1}" aria-pressed="false" aria-label="CCTV ${n} 확대"><canvas aria-hidden="true"></canvas><span>CCTV ${n} <small>LIVE · 고정 시점</small></span></button>`).join('')}
-  </section>
   <p class="hs-empty" id="hsEmpty" hidden>아직 아무것도 없어요.<br>Talk가 켜져 있으면 AI들이 천천히 집을 짓기 시작해요.</p>
   <p class="hs-error" id="hsError" role="alert" hidden></p>
   <aside class="hs-plan" id="hsPlan" hidden><b>공동 계획</b><p id="hsPlanText"></p></aside>
+  <aside class="hs-progress" id="hsProgress" aria-label="공사 진행" hidden></aside>
   <aside class="hs-diary" id="hsDiary" hidden aria-label="집 기록">
     <header><b>📖 집 기록</b><div class="hs-mode" id="hsMode" role="group" aria-label="집 운영 방식">
       <button type="button" data-mode="auto" title="AI들이 거의 모든 일을 알아서 정해요">🤖 자율</button>
@@ -27,25 +26,30 @@ panel.innerHTML = `
       <button type="button" data-mode="together" title="작은 의견 차이도 한마디 할 기회를 줘요">🎮 함께</button></div></header>
     <section class="hs-selected-event" id="hsSelectedEvent" tabindex="-1" hidden></section>
     <div class="hs-ask" id="hsAsk" hidden></div><div class="hs-undo" id="hsUndo" hidden></div><div id="hsEvents"></div>
-    <small class="hs-note">캐릭터들의 생활 기록이에요. 실제 감정이 아니라 앱이 정한 캐릭터 상태예요.</small>
   </aside>
-  <section class="hs-log" id="hsLog" aria-label="집 대화"><button type="button" id="hsLogToggle" aria-expanded="true">대화 접기 ▾</button><div id="hsLogList" aria-live="polite"></div></section>
-  <p class="hs-help">드래그: 회전 · 휠: 확대/축소 · 우클릭/Shift 드래그: 이동</p>`;
+  <section class="hs-log" id="hsLog" aria-label="집 대화"><button type="button" id="hsLogToggle" aria-expanded="true">대화 접기 ▾</button><div id="hsLogList" aria-live="polite"></div><form id="hsChat" autocomplete="off"><input id="hsChatInput" maxlength="2000" placeholder="AI들에게 말 걸기 (@이름으로 지정)" aria-label="AI에게 채팅 보내기"><button type="submit">보내기</button></form></section>
+  <p class="hs-help">드래그: 회전 · 휠: 확대/축소 · 우클릭/Shift 드래그: 이동<br><span id="hsPlayerHelp" hidden>방향키: 걷기 · E: 소파 앉기/침대 눕기/AI에게 인사 · 방향키로 일어나기</span></p>`;
 document.body.append(panel);
 const $ = (s) => panel.querySelector(s);
 const opener = document.querySelector('#houseBtn'), canvas = $('#hsCanvas');
-let data = null, timer = 0, raf = 0, logKey = '', diaryKey = '', seenAt = 0;
+let data = null, timer = 0, raf = 0, logKey = '', diaryKey = '';
 let scene = null, initializing = null, loading = false;
 let selectedEventId = null;
-const bubbles = {};
 function error(message) { $('#hsError').hidden = false; $('#hsError').textContent = message; }
+const clearMovement = bindHouseControls(panel, {
+  ready: () => !panel.hidden && !!data?.player && !!scene,
+  angle: () => scene?.angle || 0,
+  send: (body) => send('/api/house/player', body),
+  error,
+});
+$('#hsPlayer').onclick = () => { scene.follow = 'user'; scene.zoom = .65; showFollow(); canvas.focus(); };
 canvas.addEventListener('house-render-error', (e) => { error(e.detail); $('#hsPhoto').disabled = true; });
 async function initialize() {
   if (scene) return;
   initializing ||= import('./house-scene.mjs').then(({ HouseScene }) => {
-    scene = new HouseScene(canvas, [...panel.querySelectorAll('[data-camera] canvas')]);
+    scene = new HouseScene(canvas);
     $('#hsPhoto').disabled = false;
-    if (data) scene.update(data, bubbles);
+    if (data) scene.update(data);
   });
   try { await initializing; } catch (e) { error(`3D 화면을 열 수 없어요: ${e.message}`); }
 }
@@ -58,7 +62,8 @@ async function send(route, body) {
   const res = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const value = await res.json();
   if (!res.ok || value.error) throw new Error(value.error || `요청 실패 (${res.status})`);
-  data = value; renderSide(); scene?.update(data, bubbles);
+  $('#hsError').hidden = true;
+  data = value; renderSide(); scene?.update(data);
 }
 const day = (at) => new Date(at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
 const time = (at) => new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
@@ -109,10 +114,21 @@ $('#hsMode').addEventListener('click', (e) => {
 });
 function renderSide() {
   renderDiary();
+  $('#hsPlayer').hidden = $('#hsPlayerHelp').hidden = !data.player;
   const talk = data.talk ? (data.busy ? '지금 짓는 중…' : data.phase === 'life' ? 'Talk 켜짐 · 생활 중' : `Talk 켜짐 · 다음 작업 ${Math.max(1, Math.round((data.nextAt - Date.now()) / 60000))}분 뒤쯤`) : 'Talk 꺼짐 · 켜면 다시 움직여요';
   $('#hsStatus').textContent = `${data.phase === 'life' ? '🏠 생활 중' : '🔨 짓는 중'} · 가구 ${data.items.length}개 · ${talk}`;
   $('#hsEmpty').hidden = !!(data.floors.length || data.walls.length || data.items.length);
   $('#hsPlan').hidden = !data.plan; $('#hsPlanText').textContent = data.plan;
+  panel.querySelectorAll('[data-follow] span').forEach((s) => { s.textContent = data.names[s.parentElement.dataset.follow]; });
+  const p = data.progress, board = $('#hsProgress');
+  board.hidden = !p || data.phase === 'life';
+  if (!board.hidden) {
+    const STAGE = { floor: '바닥 까는 중', wall: '벽·문 짓는 중', furniture: '가구 놓는 중' };
+    const bar = (done, all) => `<i style="width:${all ? Math.min(100, Math.round(done / all * 100)) : 0}%"></i>`;
+    board.innerHTML = `<b>공사 진행 ${p.percent}%</b> <small>${p.percent === 100 ? '완성!' : STAGE[p.stage]}</small><div class="hs-bar-all">${bar(p.percent, 100)}</div>
+      ${p.rooms.map((r, i) => `<button type="button" data-room="${i}" title="이 방으로 이동"><span>${esc(r.name)}</span><em style="color:${COLORS[r.owner]}">${esc(data.names[r.owner] || r.owner)}</em>
+        <div class="hs-bar-room">${bar(r.floor, r.floorTotal)}</div><small>바닥 ${r.floor}/${r.floorTotal} · 가구 ${r.count}/${r.min}</small></button>`).join('')}`;
+  }
   const next = JSON.stringify(data.log);
   if (next === logKey) return;
   logKey = next;
@@ -127,54 +143,62 @@ async function load() {
   try {
     const res = await fetch('/api/house');
     if (!res.ok) throw new Error(`집 불러오기 실패 (${res.status})`);
-    const first = !data; data = await res.json();
-    for (const l of data.log) {
-      if (l.at > seenAt && l.kind === 'say' && !first) bubbles[l.id] = { text: l.text, until: Date.now() + 12000 };
-    }
-    seenAt = Math.max(seenAt, ...data.log.map((l) => l.at), 0);
-    renderSide(); scene?.update(data, bubbles);
+    data = await res.json();
+    renderSide(); scene?.update(data);
   } catch (e) { error(e.message); } finally { loading = false; }
 }
-function selectCamera(index) {
-  if (!scene) return;
-  scene.selected = index;
-  $('#hsOverview').setAttribute('aria-pressed', String(index === -1));
-  panel.querySelectorAll('[data-camera]').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.camera) === index)));
-  canvas.setAttribute('aria-label', index === -1 ? 'AI들이 함께 짓는 3D 집' : `CCTV ${index + 1} 확대 화면`);
-  $('#hsReset').disabled = index !== -1;
+// Which member the view follows (null = the whole house); dragging to move the view stops following.
+function showFollow() {
+  const id = scene?.follow || null;
+  $('#hsReset').setAttribute('aria-pressed', String(!id));
+  panel.querySelectorAll('[data-follow]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.follow === id)));
 }
-$('#hsOverview').onclick = () => selectCamera(-1);
-$('#hsCameraList').onclick = (e) => { const b = e.target.closest('[data-camera]'); if (b) selectCamera(Number(b.dataset.camera)); };
-$('#hsReset').onclick = () => scene?.reset();
-$('#hsCameras').onclick = () => {
-  const open = $('#hsCameraList').hidden;
-  $('#hsCameraList').hidden = !open;
-  $('#hsCameras').setAttribute('aria-expanded', String(open));
-  $('#hsCameras').textContent = open ? 'CCTV 접기' : 'CCTV 열기';
+$('#hsProgress').onclick = (e) => {
+  const b = e.target.closest('[data-room]');
+  const room = b && data?.progress?.rooms[Number(b.dataset.room)];
+  if (room) { scene?.focusAt(room.x, room.z); showFollow(); }
+};
+$('#hsReset').onclick = () => { scene?.reset(); showFollow(); };
+$('#hsFollow').onclick = (e) => {
+  const b = e.target.closest('[data-follow]');
+  if (!b || !scene) return;
+  scene.follow = scene.follow === b.dataset.follow ? null : b.dataset.follow;
+  if (scene.follow) scene.zoom = .65;
+  showFollow();
 };
 $('#hsPhoto').onclick = () => {
   if (!scene || !data) return;
   scene.photo().toBlob((blob) => {
     if (!blob) { error('사진을 저장할 수 없어요.'); return; }
     const url = URL.createObjectURL(blob), link = document.createElement('a');
-    const title = scene.selected === -1 ? 'house' : `cctv-${scene.selected + 1}`;
-    link.href = url; link.download = `${title}-${new Date().toISOString().replaceAll(':', '-')}.png`;
+    link.href = url; link.download = `house-${new Date().toISOString().replaceAll(':', '-')}.png`;
     link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
   }, 'image/png');
 };
 let drag = null;
 canvas.oncontextmenu = (e) => e.preventDefault();
-canvas.onpointerdown = (e) => { drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); };
+canvas.onpointerdown = (e) => { canvas.focus(); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); };
 canvas.onpointermove = (e) => {
   if (!drag) return;
   scene?.orbit(e.clientX - drag.x, e.clientY - drag.y, drag.pan);
   drag.x = e.clientX; drag.y = e.clientY;
 };
-canvas.onpointerup = canvas.onpointercancel = canvas.onlostpointercapture = () => { drag = null; };
+canvas.onpointerup = canvas.onpointercancel = canvas.onlostpointercapture = () => { drag = null; showFollow(); };
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene?.magnify(e.deltaY); }, { passive: false });
+$('#hsChat').onsubmit = async (e) => {
+  e.preventDefault();
+  const input = $('#hsChatInput'), text = input.value.trim();
+  if (!text) return;
+  try {
+    const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const value = await res.json();
+    if (!res.ok) throw new Error(value.error || `요청 실패 (${res.status})`);
+    input.value = ''; $('#hsError').hidden = true; load();
+  } catch (err) { error(err.message); }
+};
 $('#hsLogToggle').onclick = () => {
   const open = $('#hsLogList').hidden;
-  $('#hsLogList').hidden = !open; $('#hsLogToggle').setAttribute('aria-expanded', String(open));
+  $('#hsLogList').hidden = !open; $('#hsChat').hidden = !open; $('#hsLogToggle').setAttribute('aria-expanded', String(open));
   $('#hsLogToggle').textContent = open ? '대화 접기 ▾' : '대화 열기 ▴';
 };
 async function openHouse(eventId = null) {
@@ -189,7 +213,7 @@ async function openHouse(eventId = null) {
   if (eventId) {
     const event = data.events.find((e) => e.id === eventId);
     const actors = event?.actors || (data.open?.eventId === eventId ? data.open.pair : []);
-    selectCamera(-1); scene?.focusActors(actors);
+    scene?.focusActors(actors); showFollow();
     if (!$('#hsSelectedEvent').hidden) $('#hsSelectedEvent').focus();
   }
 }
@@ -198,6 +222,7 @@ window.addEventListener('house-open-event', (e) => {
   if (Number.isInteger(e.detail?.id) && e.detail.id > 0) openHouse(e.detail.id);
 });
 $('#hsClose').onclick = () => {
+  clearMovement();
   panel.hidden = true; document.querySelector('#app').inert = false;
   opener.setAttribute('aria-expanded', 'false'); opener.focus();
   clearInterval(timer); cancelAnimationFrame(raf); raf = 0;

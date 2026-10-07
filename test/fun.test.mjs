@@ -15,6 +15,17 @@ const names = { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini', user: '방�
 const temp = (t, prefix) => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 const seeded = (seed) => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
 const def = (name, w = 1) => ({ type: 'define', name, parts: [{ s: 'box', x: 0, y: 0, z: 0, w, h: 0.6, d: 1, c: 'blue' }] });
+test('a builder who did not choose where to walk ends up on the floor next to the work; idle members stroll', (t) => {
+  const house = new House(path.join(temp(t, 'chat-walk-'), 'house.json'), { ids: IDS, names });
+  house.apply('gpt', { actions: [{ type: 'floor', x1: 10, z1: 10, x2: 13, z2: 13, color: 'wood' }] }, 1);
+  const { x, z } = house.s.agents.gpt;
+  assert.ok(x >= 10 && x <= 13 && z >= 10 && z <= 13, 'gpt stands on the floor it laid');
+  const before = { ...house.s.agents.claude };
+  assert.ok(house.wander('claude', seeded(7)));
+  const after = house.s.agents.claude;
+  assert.ok((after.x !== before.x || after.z !== before.z) && house.s.floors[`${after.x},${after.z}`], 'claude strolled onto a floor cell');
+});
+
 function home(file) {
   const house = new House(file, { ids: IDS, names });
   house.apply('claude', { actions: [{ type: 'floor', x1: 2, z1: 2, x2: 6, z2: 5, color: 'wood' }, { type: 'wall', x1: 2, z1: 1, x2: 8, z2: 1, color: 'cream' }, { type: 'wall', x1: 7, z1: 2, x2: 7, z2: 5, color: 'cream' }, { type: 'door', x: 4, z: 1 }] }, 1);
@@ -27,7 +38,7 @@ test('life shares are app-drawn SVG scenes with short varied captions and no rep
   const house = home(path.join(temp(t, 'share-'), 'house.json'));
   enterLife(house, 1);
   const svg = renderShare({ theme: 'sofa', actor: 'claude', friends: ['gpt'], house, names, caption: '소파가 <날> 놔주지 않음' });
-  assert.match(svg, /^<svg[\s\S]*<\/svg>$/); assert.match(svg, /data:image\/webp;base64,/); assert.match(svg, /소파가 &lt;날&gt;/);
+  assert.match(svg, /^<svg[\s\S]*<\/svg>$/); assert.match(svg, /data:image\/png;base64,/); assert.match(svg, /소파가 &lt;날&gt;/);
   assert.match(svg, /앱이 그린 장면/); assert.ok(Buffer.byteLength(svg) < 60 * 1024, `${Buffer.byteLength(svg)} bytes fit the workspace limit`);
   assert.match(renderShare({ theme: 'party', actor: 'gemini', names, caption: '나 파티옴ㅋㅋ' }), /🎉/);
   const recent = [];
