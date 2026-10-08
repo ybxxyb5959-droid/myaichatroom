@@ -41,7 +41,7 @@ dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria
 <details class="share-manage"><summary>친구 관리 · AI 사용 한도</summary>
 <h3>방 모드</h3><select data-room-mode aria-label="방 모드"><option value="multi">친구와 쓰기</option><option value="solo">혼자 쓰기</option></select>
 <p class="share-note">혼자 쓰기에서는 친구 입장과 접속을 닫습니다. 친구와 쓰기로 돌아오면 기존 친구가 재접속할 수 있어요.</p>
-<h3>친구 권한</h3><div class="share-permissions"><label><input type="checkbox" data-permission="chat"> 채팅</label><label><input type="checkbox" data-permission="questions"> AI 질문</label><label><input type="checkbox" data-permission="discussion"> 토론</label><label><input type="checkbox" data-permission="house"> 집·투표 참여</label></div>
+<h3>친구 권한</h3><div class="share-permissions"><label><input type="checkbox" data-permission="chat"> 채팅</label><label><input type="checkbox" data-permission="questions"> AI 질문</label><label><input type="checkbox" data-permission="discussion"> 토론</label><label><input type="checkbox" data-permission="house"> 집·투표 참여</label><label><input type="checkbox" data-permission="games"> 미니게임 시작</label></div>
 <h3>친구 AI 호출 한도</h3><p data-usage></p>
 <form data-limits><label>친구 공용 하루 AI 호출 <input name="total" type="number" min="0" max="1000" required value="100"></label> <button>저장</button></form>
 <p class="share-note">기본 공용 100회. 입장 권한이 있는 친구끼리 남은 한도를 균등 배분합니다. 친구 추가·내보내기·한도 변경 시 남은 몫만 다시 나누며 이미 쓴 횟수는 유지합니다. 브라우저를 닫거나 다시 열어도 초기화되지 않습니다. 자정(PC 시간)에 새로 배분합니다.</p>

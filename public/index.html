@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title data-i18n="app.title">AI 단톡방</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
@@ -51,6 +51,11 @@
           <div class="seg" id="chatFrequencySeg" role="group" aria-label="채팅 빈도"><button type="button" data-frequency="quiet">조용한</button><button type="button" data-frequency="normal">보통</button><button type="button" data-frequency="lively">활발하게</button></div>
         </div>
         <p class="hint" id="chatFrequencyHint">자율 대화 빈도만 조절해요. 직접 질문과 멘션은 그대로 답해요.</p>
+        <div class="field" id="aiIntensityField">
+          <span class="field-label">🤖 AI 참여 강도</span>
+          <div class="seg" id="aiIntensitySeg" role="group" aria-label="AI 참여 강도"><button type="button" data-intensity="quiet">조용히</button><button type="button" data-intensity="normal">보통</button><button type="button" data-intensity="lively">활발하게</button></div>
+        </div>
+        <p class="hint" id="aiIntensityHint"></p>
         <div class="field">
           <span class="field-label">⚡ 진심모드</span>
           <div class="seg" id="boostSeg" role="group" aria-label="진심모드"><button type="button" data-boost="auto">자동</button><button type="button" data-boost="manual">부를 때만</button><button type="button" data-boost="off">끔</button></div>
@@ -85,6 +90,7 @@
         <button class="icon-btn" id="shareBtn" type="button" aria-label="휴대폰 연결 및 친구 초대" title="휴대폰 연결 · 친구 초대">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="19" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 10 6-4M9 14l6 4" stroke="currentColor" stroke-width="1.7"/></svg>
         </button>
+        <button class="icon-btn" id="notifyBtn" type="button" aria-label="알림 설정" title="알림 설정" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
         <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" aria-expanded="false" title="집짓기 · 생활 · 집 기록"><span aria-hidden="true" style="font-size:19px;line-height:1">🏠</span></button>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -426,6 +432,7 @@
       <div id="msgs"></div>
       <section id="discussionStage" class="discussion-stage" aria-label="도트 캐릭터 토론" hidden></section>
     </div>
+    <div class="conn-banner" id="connBanner" role="status" hidden></div>
     <button class="jump" id="jump" type="button" hidden>최신 메시지로 ↓</button>
 
     <div class="typing" id="typing" aria-live="polite"></div>
@@ -453,6 +460,7 @@
           <span class="ds-label">웹 검색 요청</span>
           <span class="switch"><input id="webSearch" type="checkbox" aria-label="웹 검색 요청" aria-describedby="webHint"><span></span></span>
         </label>
+        <span class="play-tools"><button type="button" class="play-tool" id="pollBtn" title="투표 만들기 (AI 호출 없음)">📊 투표</button><button type="button" class="play-tool" id="gameBtn" title="미니게임 시작">🎮 게임</button><button type="button" class="play-tool" id="savedBtn" title="저장한 명장면 모아보기">★ 명장면</button></span>
         <span class="grow"></span>
         <button id="stop" class="stop-pill" type="button" hidden>■ 중지</button>
       </div>
@@ -487,6 +495,57 @@
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
+<dialog class="play-dialog" id="pollDialog" aria-labelledby="pollTitle">
+  <form method="dialog" id="pollForm">
+    <h2 id="pollTitle">📊 투표 만들기</h2>
+    <label>질문<input id="pollQuestion" maxlength="100" required placeholder="예: 오늘 저녁 뭐 먹을까?"></label>
+    <div id="pollOptions"><input maxlength="40" required placeholder="선택지 1" aria-label="선택지 1"><input maxlength="40" required placeholder="선택지 2" aria-label="선택지 2"></div>
+    <button type="button" class="link-btn" id="pollAdd">+ 선택지 추가 (최대 4개)</button>
+    <label>마감<select id="pollMinutes"><option value="0">직접 마감</option><option value="1">1분 뒤</option><option value="5">5분 뒤</option><option value="10">10분 뒤</option><option value="30">30분 뒤</option><option value="60">1시간 뒤</option></select></label>
+    <p class="hint">1인 1표 · 투표에는 AI 호출을 쓰지 않아요.</p>
+    <div class="play-dialog-actions"><button value="cancel" formnovalidate>취소</button><button value="ok" class="primary" id="pollSubmit">만들기</button></div>
+  </form>
+</dialog>
+<dialog class="play-dialog" id="gameDialog" aria-labelledby="gameTitle">
+  <form method="dialog">
+    <h2 id="gameTitle">🎮 미니게임</h2>
+    <label>주제 힌트 (선택)<input id="gameTopic" maxlength="40" placeholder="예: 음식, 여행, 영화"></label>
+    <div class="play-dialog-games"><button value="balance" class="primary">⚖️ 밸런스게임<small>둘 중 하나 고르기 · 60초</small></button><button value="quiz" class="primary">🧠 퀴즈 배틀<small>객관식 5문제 · 문제당 20초</small></button></div>
+    <p class="hint" id="gameHint">게임 시작 때 AI가 문제를 한 번만 만들어요 (호출 1회). 선택·채점에는 AI를 쓰지 않아요.</p>
+    <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
+  </form>
+</dialog>
+<dialog class="play-dialog" id="profileDialog" aria-labelledby="profileTitle">
+  <form method="dialog" id="profileForm">
+    <h2 id="profileTitle">내 프로필</h2>
+    <label>닉네임<input id="profileName" maxlength="24" required autocomplete="nickname"></label>
+    <div class="field-label">프로필 아이콘</div>
+    <div class="icon-grid" id="profileIcons" role="radiogroup" aria-label="프로필 아이콘"></div>
+    <p class="hint">다른 사람과 같은 이름은 쓸 수 없어요. 바꿔도 예전 메시지는 그대로 내 메시지로 이어져요.</p>
+    <div class="play-dialog-actions"><button value="cancel" formnovalidate>취소</button><button value="ok" class="primary">저장</button></div>
+  </form>
+</dialog>
+<dialog class="play-dialog" id="summaryDialog" aria-labelledby="summaryTitle">
+  <form method="dialog">
+    <h2 id="summaryTitle">📝 놓친 대화 요약</h2>
+    <div id="summaryBody" class="summary-body" aria-live="polite"></div>
+    <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
+  </form>
+</dialog>
+<dialog class="play-dialog" id="notifyDialog" aria-labelledby="notifyTitle">
+  <form method="dialog" id="notifyForm">
+    <h2 id="notifyTitle">🔔 알림</h2>
+    <div id="notifyBody"></div>
+    <div class="play-dialog-actions" id="notifyActions"></div>
+  </form>
+</dialog>
+<dialog class="play-dialog" id="savedDialog" aria-labelledby="savedTitle">
+  <form method="dialog">
+    <h2 id="savedTitle">★ 명장면</h2>
+    <ol id="savedList" class="saved-list"></ol>
+    <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
+  </form>
+</dialog>
 <div class="modal-back" id="setup" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
     <ol class="steps" id="setupSteps"><li>AI 연결</li><li>모델 고르기</li><li>시작</li></ol>

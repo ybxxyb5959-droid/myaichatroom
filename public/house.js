@@ -329,7 +329,7 @@ $('#hsChat').onsubmit = async (e) => {
   const input = $('#hsChatInput'), text = input.value.trim();
   if (!text) return;
   try {
-    const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+    const res = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, ...(document.body.dataset.role === 'guest' ? {} : { mode: 'house' }) }) });
     const value = await res.json();
     if (!res.ok) throw new Error(value.error || `요청 실패 (${res.status})`);
     input.value = ''; $('#hsError').hidden = true; load();
@@ -361,6 +361,7 @@ async function openHouse(eventId = null) {
   }
 }
 opener.onclick = () => openHouse();
+window.addEventListener('house-open', () => openHouse());
 window.addEventListener('house-open-event', (e) => {
   if (Number.isInteger(e.detail?.id) && e.detail.id > 0) openHouse(e.detail.id);
 });

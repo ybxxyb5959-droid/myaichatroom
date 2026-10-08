@@ -48,7 +48,7 @@ test('one-use invitations, persistent identity, revocation, expiry and daily rea
   assert.throws(() => sharing.limits({ total: -1 }), /정수/);
 });
 
-async function fixture(t, chat, { ids = ['claude'] } = {}) {
+async function fixture(t, chat, { ids = ['claude'], pushSend = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sharing-http-'));
   let now = new Date(2026, 9, 8, 12).getTime(), proxy, stopped = 0;
   const calls = [];
@@ -56,7 +56,7 @@ async function fixture(t, chat, { ids = ['claude'] } = {}) {
   const app = createAssistantServer({ root, cfg: loadConfig(path.join(root, 'config.json')), clock: () => now, autoTickMs: 3600000,
     adapter: { available: () => Object.fromEntries(['claude', 'gpt', 'gemini'].map(id => [id, ids.includes(id)])),
       chat: async (...args) => { calls.push(args); return chat ? chat(...args) : { ok: true, text: '친구 답변입니다.' }; } },
-    tailscaleServe: tunnel, tailscaleFunnel: tunnel });
+    tailscaleServe: tunnel, tailscaleFunnel: tunnel, pushSend });
   t.after(async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const local = `http://127.0.0.1:${app.server.address().port}`;
@@ -207,7 +207,8 @@ test('HTTPS proxy authenticates before room data, isolates guest permissions and
   assert.equal((await f.remote('/api/send', { cookie, body: { text: '사람끼리 대화' } })).status, 200);
   assert.equal(f.calls.length, 0);
   assert.equal(f.app.store.messages.at(-1).displayName, '민수');
-  assert.equal(f.app.runtime.store.recent(100).some(m => m.guestId), false);
+  assert.equal(f.app.runtime.store.after(0).some(m => m.guestId), false, 'friend messages never wake the unmetered engine');
+  assert.equal(f.app.runtime.store.recent(100).some(m => m.guestId), true, 'friend messages are shared room history');
   const ownerMobile = await f.join('', 'owner');
   assert.equal((await f.remote('/api/share', { cookie: ownerMobile.cookie })).status, 200);
   assert.match((await f.remote('/', { cookie: ownerMobile.cookie })).text, /shareBtn/);
@@ -597,7 +598,8 @@ test('ordinary friend messages batch automatically, use mention priority and rec
   assert.match(f.calls[0][2], /날씨 좋더라/);
   assert.equal((await f.owner('/api/share')).body.usage.total, 1);
   await f.pump(10000); assert.equal(f.calls.length, 1);
-  assert.equal(f.app.runtime.store.recent(100).some(m => m.guestId), false);
+  assert.equal(f.app.runtime.store.after(0).some(m => m.guestId), false, 'friend messages never wake the unmetered engine');
+  assert.equal(f.app.runtime.store.recent(100).some(m => m.guestId), true, 'friend messages are shared room history');
 });
 
 test('friends queue while a reply is running; multiple friends cannot double-charge or overlap providers', async (t) => {
@@ -786,4 +788,375 @@ test('guest gallery serves only AI media shared after entry; private files, old 
   assert.equal((await f.remote('/api/gallery')).status,401);
   const manifest = (await f.remote('/manifest.webmanifest')).body;
   assert.deepEqual(manifest.related_applications,[{platform:'webapp',url:'https://room.example.ts.net:8443/manifest.webmanifest',id:'https://room.example.ts.net:8443/'}]);
+});
+
+const say = (body) => ({ ok: true, text: JSON.stringify(body) });
+test('phase 2: owner and three friends share one room; AIs see each speaker, answer the chosen friend, may pass, and charge per chain', async t => {
+  const replies = [];
+  const f = await fixture(t, (id, brief, prompt) => (replies.shift() || (() => say({ action: 'pass' })))(id, prompt), { ids: ['claude', 'gpt', 'gemini'] });
+  const a = await f.join('민수'), b = await f.join('지영'), c = await f.join('하늘');
+  await f.start();
+  assert.equal((await f.owner('/api/send', { text: '방장도 왔어' })).status, 200);
+  const first = (await f.remote('/api/send', { cookie: a.cookie, body: { text: '@Claude 오늘 뭐해?' } })).body.messageId;
+  f.tick();
+  const second = (await f.remote('/api/send', { cookie: b.cookie, body: { text: '나는 영화 볼래' } })).body.messageId;
+  replies.push((id, prompt) => {
+    assert.equal(id, 'claude');
+    assert.match(prompt, /민수\(친구\): @Claude 오늘 뭐해\?/); assert.match(prompt, /지영\(친구\): 나는 영화 볼래/);
+    assert.match(prompt, /방장: 방장도 왔어/); assert.match(prompt, new RegExp(`너를 부르거나 너한테 답한 메시지: #${first}`));
+    return say({ action: 'say', messages: ['지영아 무슨 영화?', '민수는 나랑 산책 어때'], reply_to: second });
+  });
+  await f.pump(); await f.wait(() => f.app.store.messages.at(-1).from === 'claude');
+  const answers = f.app.store.messages.filter(m => m.from === 'claude');
+  assert.deepEqual(answers.map(m => m.addressedTo), ['지영', '지영']);
+  assert.equal(answers[0].replyTo, second); assert.equal(answers[1].replyTo, undefined);
+  assert.equal(answers[0].chain.cause, second); assert.equal(f.calls.length, 1);
+  assert.equal(f.app.runtime.store.after(0).some(m => m.guestId), false);
+  let admin = (await f.owner('/api/share')).body;
+  assert.deepEqual(admin.guests.map(g => g.usage.used), [1, 0, 0]);
+  // A friend-caused turn may pass: nothing is posted, the call is still charged once.
+  f.tick(); await f.remote('/api/send', { cookie: c.cookie, body: { text: '그냥 혼잣말' } });
+  await f.pump(); await f.wait(() => f.calls.length === 2 && !f.app.runtime.agents[f.calls[1][0]].busy);
+  assert.equal(f.app.store.messages.at(-1).text, '그냥 혼잣말');
+  admin = (await f.owner('/api/share')).body;
+  assert.deepEqual(admin.guests.map(g => g.usage.used), [1, 0, 1]);
+  const guestState = (await f.remote('/api/state', { cookie: b.cookie })).body;
+  assert.equal(guestState.messages.find(m => m.id === answers[0].id).addressedTo, '지영');
+  assert.equal(guestState.sharedRoom.aiIntensity, 'normal');
+});
+
+const CHAIN_LINES = { claude: '@GPT 너는 어때?', gpt: '@Gemini 너도 말해줘', gemini: '@Claude 다시 너!' };
+test('phase 2: lively chains follow AI mentions up to three charged calls; normal and quiet stay bounded', async t => {
+  const f = await fixture(t, (id) => say({ action: 'say', messages: [CHAIN_LINES[id]] }), { ids: ['claude', 'gpt', 'gemini'] });
+  const friend = await f.join('체인친구'); await f.start();
+  assert.equal((await f.remote('/api/room', { cookie: friend.cookie, body: { aiIntensity: 'lively' } })).status, 403);
+  assert.equal((await f.owner('/api/room', { aiIntensity: 'loud' })).status, 400);
+  assert.equal((await f.owner('/api/room', { aiIntensity: 'lively' })).status, 200);
+  await f.remote('/api/send', { cookie: friend.cookie, body: { text: '@Claude 이야기 시작해줘' } });
+  await f.pump(); await f.wait(() => f.calls.length === 1 && !f.app.runtime.agents.claude.busy);
+  assert.equal((await f.remote('/api/state', { cookie: friend.cookie })).body.autoReply, 'responding');
+  await f.pump(1000); assert.equal(f.calls.length, 1, 'follow-up waits a short beat');
+  await f.pump(600); await f.wait(() => f.calls.length === 2 && !f.app.runtime.agents.gpt.busy);
+  assert.equal(f.calls[1][0], 'gpt'); assert.match(f.calls[1][2], /Claude가 너에게 말을 넘겼어/);
+  await f.pump(2000); await f.wait(() => f.calls.length === 3 && !f.app.runtime.agents.gemini.busy);
+  for (let n = 0; n < 5; n++) await f.pump(2000);
+  assert.equal(f.calls.length, 3, 'a chain never exceeds three calls even when the AI keeps mentioning');
+  assert.deepEqual(f.calls.map(c => c[0]), ['claude', 'gpt', 'gemini']);
+  assert.equal((await f.owner('/api/share')).body.usage.total, 3);
+  assert.equal(new Set(f.app.store.messages.filter(m => m.chain).map(m => m.chain.id)).size, 1);
+  // Normal: one call; the AI's mention does not continue the chain.
+  await f.owner('/api/room', { aiIntensity: 'normal' }); f.tick(20000);
+  await f.remote('/api/send', { cookie: friend.cookie, body: { text: '@Claude 한 번 더' } });
+  await f.pump(); await f.wait(() => f.calls.length === 4 && !f.app.runtime.agents.claude.busy);
+  for (let n = 0; n < 3; n++) await f.pump(2000);
+  assert.equal(f.calls.length, 4);
+  // Quiet: plain friend chatter is never sent to an AI; an explicit call is.
+  await f.owner('/api/room', { aiIntensity: 'quiet' }); f.tick(20000);
+  await f.remote('/api/send', { cookie: friend.cookie, body: { text: '사람끼리 수다' } });
+  assert.equal((await f.remote('/api/state', { cookie: friend.cookie })).body.autoReply, 'ready');
+  await f.pump(); await f.pump(); assert.equal(f.calls.length, 4);
+  f.tick();
+  await f.remote('/api/send', { cookie: friend.cookie, body: { text: '@GPT 너만 대답해' } });
+  await f.pump(); await f.wait(() => f.calls.length === 5 && !f.app.runtime.agents.gpt.busy);
+  assert.equal(f.calls[4][0], 'gpt');
+  assert.equal(f.app.view().room.aiIntensity, 'quiet');
+});
+
+test('phase 2: chain stops when the friend budget runs out, and simultaneous friends never overlap or double-charge', async t => {
+  const f = await fixture(t, (id) => say({ action: 'say', messages: [id === 'claude' ? '@GPT 받아' : '좋아'] }), { ids: ['claude', 'gpt'] });
+  const one = await f.join('한도친구'); await f.start();
+  await f.owner('/api/room', { aiIntensity: 'lively' });
+  const guestId = (await f.owner('/api/share')).body.guests[0].id;
+  await f.owner('/api/share/limits', { guestId, limit: 1 });
+  await f.remote('/api/send', { cookie: one.cookie, body: { text: '@Claude 시작' } });
+  await f.pump(); await f.wait(() => f.calls.length === 1 && !f.app.runtime.agents.claude.busy);
+  for (let n = 0; n < 3; n++) await f.pump(2000);
+  assert.equal(f.calls.length, 1, 'no follow-up without remaining budget');
+  assert.equal((await f.remote('/api/state', { cookie: one.cookie })).body.usage.remaining, 0);
+  assert.equal((await f.remote('/api/send', { cookie: one.cookie, body: { text: '한도 끝나도 채팅' } })).status, 200);
+  const two = await f.join('동시1'), three = await f.join('동시2');
+  f.tick();
+  const sent = await Promise.all([two, three].map((p, i) => f.remote('/api/send', { cookie: p.cookie, body: { text: `@GPT 동시 ${i}` } })));
+  assert.deepEqual(sent.map(r => r.status), [200, 200]);
+  await Promise.all([f.pump(), f.pump(0), f.pump(0)]);
+  await f.wait(() => f.calls.length === 2 && !f.app.runtime.agents.gpt.busy);
+  await f.pump(2000); await f.wait(() => f.calls.length === 3 && !f.app.runtime.agents.gpt.busy);
+  const admin = (await f.owner('/api/share')).body;
+  assert.deepEqual(admin.guests.map(g => g.usage.used), [1, 1, 1]);
+});
+
+test('phase 2: friends toggle emoji reactions with their own id, live and after restart, without AI calls', async t => {
+  const f = await fixture(t);
+  const before = f.app.store.addMessage({ from: 'claude', text: '입장 전 메시지' });
+  const friend = await f.join('반응친구'), other = await f.join('다른반응');
+  const owned = f.app.store.addMessage({ from: 'user', text: '방장 메시지' });
+  const target = (await f.remote('/api/send', { cookie: other.cookie, body: { text: '친구 메시지' } })).body.messageId;
+  const react = (cookie, id, emoji = '😂') => f.remote('/api/react', { cookie, body: { id, emoji } });
+  assert.equal((await react(friend.cookie, before.id)).status, 403);
+  assert.equal((await react(friend.cookie, target, '🔥')).status, 400);
+  const system = f.app.store.messages.find(m => m.from === 'system' && m.id > before.id);
+  assert.equal((await react(friend.cookie, system.id)).status, 403);
+  assert.equal((await react(friend.cookie, target)).body.on, true);
+  assert.equal((await react(other.cookie, target)).body.on, true);
+  assert.equal((await react(friend.cookie, owned.id, '❤️')).status, 200);
+  const guestId = (await f.owner('/api/share')).body.guests.find(g => g.name === '반응친구').id;
+  const state = (await f.remote('/api/state', { cookie: other.cookie })).body;
+  assert.equal(state.messages.find(m => m.id === target).reactions['😂'].length, 2);
+  assert.ok(state.messages.find(m => m.id === owned.id).reactions['❤️'].includes(`guest:${guestId}`));
+  assert.equal((await react(friend.cookie, target)).body.on, false);
+  assert.equal((await f.owner('/api/react', { id: target, emoji: '👍' })).body.on, true);
+  assert.equal((await f.owner('/api/react', { id: target, emoji: '👍' })).body.on, false);
+  assert.equal((await f.owner('/api/react', { id: target, emoji: '👍' })).body.on, true);
+  const { Store } = await import('../lib/store.mjs');
+  const reloaded = new Store(f.app.store.root).byId.get(target).reactions;
+  assert.equal(reloaded['😂'].length, 1); assert.ok(!reloaded['😂'].includes(`guest:${guestId}`));
+  assert.deepEqual(reloaded['👍'], ['user']);
+  assert.equal(f.calls.length, 0);
+  await f.owner('/api/share/access', { permissions: { chat: false } });
+  assert.equal((await react(friend.cookie, target)).status, 403);
+});
+
+const QUIZ = { questions: [
+  { q: '1+1은?', choices: ['2', '3', '4', '5'], answer: 0 }, { q: '하늘색은?', choices: ['파랑', '빨강', '검정', '하양'], answer: 0 },
+  { q: '고양이 소리는?', choices: ['야옹', '멍멍', '음메', '꿀꿀'], answer: 0 }, { q: '한 주는 며칠?', choices: ['7일', '5일', '6일', '8일'], answer: 0 },
+  { q: '얼음은 무엇이 언 것?', choices: ['물', '모래', '돌', '나무'], answer: 0 }], reaction: '다들 똑똑하네!' };
+const playFixture = (t, { quiz = QUIZ, fail = false } = {}) => fixture(t, (id, brief, prompt) => {
+  if (!/미니게임 문제/.test(brief)) return { ok: true, text: JSON.stringify({ action: 'pass' }) };
+  if (fail) return { ok: false, detail: 'RESOURCE_EXHAUSTED 429' };
+  return { ok: true, text: /밸런스게임/.test(prompt)
+    ? JSON.stringify({ question: '여행 간다면?', a: '산', b: '바다', reactions: { a: '산파 승리!', b: '바다 최고!', tie: '팽팽하네' } })
+    : JSON.stringify(quiz) };
+}, { ids: ['claude', 'gpt'] });
+const act = (f, cookie, body) => cookie ? f.remote('/api/play', { cookie, body }) : f.owner('/api/play', body);
+
+test('phase 3: chat polls are 1 person 1 vote, live, closable only by creator or owner, persistent and AI-free', async t => {
+  const f = await playFixture(t);
+  const a = await f.join('투표왕'), b = await f.join('투표러');
+  assert.equal((await act(f, a.cookie, { action: 'poll.create', question: '점심?', options: ['국밥'] })).status, 400);
+  assert.equal((await act(f, a.cookie, { action: 'poll.create', question: '점심?', options: ['국밥', '국밥'] })).status, 400);
+  assert.equal((await act(f, a.cookie, { action: 'poll.create', question: '점심?', options: ['1', '2', '3', '4', '5'] })).status, 400);
+  const created = await act(f, a.cookie, { action: 'poll.create', question: '점심 뭐 먹지?', options: ['국밥', '파스타', '초밥'] });
+  assert.equal(created.status, 200);
+  const id = created.body.id;
+  assert.equal((await act(f, a.cookie, { action: 'poll.vote', id, choice: 1, voter: 'ai:claude' })).status, 200);
+  assert.equal((await act(f, a.cookie, { action: 'poll.vote', id, choice: 0 })).status, 409);
+  assert.equal((await act(f, b.cookie, { action: 'poll.vote', id, choice: 9 })).status, 400);
+  assert.equal((await act(f, b.cookie, { action: 'poll.vote', id, choice: 1 })).status, 200);
+  assert.equal((await act(f, null, { action: 'poll.vote', id, choice: 2 })).status, 200);
+  const live = (await f.remote('/api/state', { cookie: b.cookie })).body.play.polls.find(p => p.id === id);
+  assert.deepEqual(live.counts, [0, 2, 1]); assert.equal(live.mine, 1);
+  assert.ok(!JSON.stringify(live.voters).includes('ai:'));
+  const late = await f.join('늦은친구');
+  assert.equal((await f.remote('/api/state', { cookie: late.cookie })).body.play.polls.length, 0);
+  assert.equal((await act(f, late.cookie, { action: 'poll.vote', id, choice: 0 })).status, 403);
+  assert.equal((await act(f, b.cookie, { action: 'poll.close', id })).status, 403);
+  assert.equal((await act(f, a.cookie, { action: 'poll.close', id })).status, 200);
+  assert.equal((await act(f, null, { action: 'poll.vote', id, choice: 0 })).status, 409);
+  assert.match(f.app.store.messages.at(-1).text, /투표 마감 · 점심 뭐 먹지\? → "파스타" \(2표\) · 총 3표/);
+  const timed = (await act(f, null, { action: 'poll.create', question: '영화?', options: ['예', '아니오'], minutes: 1 })).body.id;
+  f.tick(60001); f.app.playTick();
+  assert.equal(f.app.play.data.polls[timed].status, 'closed');
+  assert.equal(f.calls.length, 0, 'polls never call an AI');
+  const { Play } = await import('../lib/play.mjs');
+  const reloaded = new Play(path.join(f.app.store.root, 'data', 'play.json'));
+  assert.deepEqual(reloaded.data.polls[id].result.counts, [0, 2, 1]);
+});
+
+test('phase 3: balance game needs owner or a permitted friend, uses one charged content call, one choice each, and posts the result with the AI reaction', async t => {
+  const f = await playFixture(t);
+  const a = await f.join('밸런스가'), b = await f.join('밸런스나');
+  await f.start();
+  assert.equal((await act(f, a.cookie, { action: 'game.start', kind: 'balance' })).status, 403);
+  await f.owner('/api/share/access', { permissions: { games: true } });
+  const started = await act(f, a.cookie, { action: 'game.start', kind: 'balance', topic: '여행' });
+  assert.equal(started.status, 200);
+  assert.equal((await act(f, b.cookie, { action: 'game.start', kind: 'quiz' })).status, 409, 'one game at a time');
+  await f.wait(() => f.app.play.data.games[started.body.id].status === 'open');
+  assert.equal(f.calls.length, 1);
+  assert.equal((await f.owner('/api/share')).body.guests.find(g => g.name === '밸런스가').usage.used, 1);
+  const game = (await f.remote('/api/state', { cookie: b.cookie })).body.play.games.at(-1);
+  assert.deepEqual(game.options, ['산', '바다']); assert.equal(game.reactions, undefined);
+  for (const [cookie, choice] of [[a.cookie, 1], [b.cookie, 1], [null, 0]])
+    assert.equal((await act(f, cookie, { action: 'game.choose', id: game.id, choice })).status, 200);
+  assert.equal((await act(f, b.cookie, { action: 'game.choose', id: game.id, choice: 0 })).status, 409);
+  assert.equal((await act(f, a.cookie, { action: 'game.end' })).status, 403);
+  f.tick(60001); f.app.playTick();
+  const tail = f.app.store.messages.slice(-2);
+  assert.match(tail[0].text, /산 1표 vs 바다 2표 → "바다" 승!/);
+  assert.equal(tail[1].from, f.app.play.data.games[game.id].author); assert.equal(tail[1].text, '바다 최고!'); assert.equal(tail[1].playId, game.id);
+  assert.equal(f.app.runtime.store.after(0).some(m => m.playId), false, 'game messages never wake the unmetered engine');
+  assert.equal(f.calls.length, 1, 'choices and results never call an AI');
+});
+
+test('phase 3: quiz battle hides answers, scores on the server, rejects duplicates, ranks, and falls back to the bank', async t => {
+  const f = await playFixture(t);
+  const a = await f.join('퀴즈가'), b = await f.join('퀴즈나');
+  await f.start();
+  const id = (await act(f, null, { action: 'game.start', kind: 'quiz' })).body.id;
+  await f.wait(() => f.app.play.data.games[id].status === 'open');
+  const stored = f.app.play.data.games[id];
+  for (let n = 0; n < 5; n++) {
+    const view = (await f.remote('/api/state', { cookie: a.cookie })).body.play.games.at(-1);
+    assert.equal(view.index, n); assert.equal(JSON.stringify(view.question).includes('answer'), false);
+    assert.equal(view.review.length, n);
+    const right = stored.questions[n].answer;
+    assert.equal((await act(f, a.cookie, { action: 'game.choose', id, index: n, choice: right })).body.correct, true);
+    assert.equal((await act(f, a.cookie, { action: 'game.choose', id, index: n, choice: right })).status, 409);
+    if (n < 2) assert.equal((await act(f, b.cookie, { action: 'game.choose', id, index: n, choice: (right + 1) % 4 })).body.correct, false);
+    if (n === 3) assert.equal((await act(f, b.cookie, { action: 'game.choose', id, index: n - 1, choice: 0 })).status, 409, 'stale question');
+    f.tick(20001); f.app.playTick();
+  }
+  assert.equal(stored.status, 'ended');
+  const view = (await f.remote('/api/state', { cookie: b.cookie })).body.play.games.at(-1);
+  assert.deepEqual(view.scores.map(s => s.id), [`guest:${(await f.owner('/api/share')).body.guests.find(g => g.name === '퀴즈가').id}`, view.scores[1].id]);
+  assert.equal(view.scores[1].score, 0); assert.equal(view.review.length, 5);
+  assert.ok(view.review.every(r => Number.isInteger(r.answer)));
+  const tail = f.app.store.messages.slice(-2);
+  assert.match(tail[0].text, /1위 퀴즈가 \d+점 · 2위 퀴즈나 0점/); assert.equal(tail[1].text, '다들 똑똑하네!');
+  assert.equal(f.calls.length, 1);
+  // Owner may stop a running game; a failing AI falls back to reused questions without a reaction.
+  const g = await playFixture(t, { fail: true });
+  const second = (await act(g, null, { action: 'game.start', kind: 'quiz' })).body.id;
+  await g.wait(() => g.app.play.data.games[second].status === 'open');
+  assert.equal(g.app.play.data.games[second].questions.length, 5); assert.equal(g.app.play.data.games[second].author, null);
+  assert.equal((await act(g, null, { action: 'game.end' })).status, 200);
+  assert.match(g.app.store.messages.at(-1).text, /퀴즈 배틀을 종료했어요/);
+});
+
+test('phase 3: bookmarks are private per person, limited to visible messages, survive restart and call no AI', async t => {
+  const f = await playFixture(t);
+  const old = f.app.store.addMessage({ from: 'claude', text: '입장 전 명언' });
+  const a = await f.join('북마크가'), b = await f.join('북마크나');
+  const funny = f.app.store.addMessage({ from: 'gpt', text: '웃긴 말' });
+  assert.equal((await act(f, a.cookie, { action: 'bookmark.toggle', id: old.id })).status, 403);
+  assert.equal((await act(f, a.cookie, { action: 'bookmark.toggle', id: funny.id })).body.on, true);
+  assert.equal((await act(f, null, { action: 'bookmark.toggle', id: old.id })).body.on, true);
+  assert.deepEqual((await f.remote('/api/state', { cookie: a.cookie })).body.play.bookmarks, [funny.id]);
+  assert.deepEqual((await f.remote('/api/state', { cookie: b.cookie })).body.play.bookmarks, []);
+  assert.deepEqual(f.app.view().play.bookmarks, [old.id]);
+  assert.equal((await act(f, a.cookie, { action: 'bookmark.toggle', id: funny.id })).body.on, false);
+  assert.equal((await act(f, a.cookie, { action: 'bookmark.toggle', id: funny.id })).body.on, true);
+  const { Play } = await import('../lib/play.mjs');
+  const reloaded = new Play(path.join(f.app.store.root, 'data', 'play.json'));
+  const guestId = (await f.owner('/api/share')).body.guests.find(g => g.name === '북마크가').id;
+  assert.deepEqual(reloaded.bookmarks(`guest:${guestId}`), [funny.id]);
+  assert.equal(f.calls.length, 0);
+});
+
+test('phase 4: a friend edits only their own profile; ids keep old messages linked and prompts use the new name', async t => {
+  const f = await fixture(t, () => ({ ok: true, text: JSON.stringify({ action: 'pass' }) }));
+  const a = await f.join('옛이름'), b = await f.join('다른친구');
+  const first = (await f.remote('/api/send', { cookie: a.cookie, body: { text: '이름 바꾸기 전 메시지' } })).body.messageId;
+  const profile = (cookie, body) => f.remote('/api/profile', { cookie, body });
+  assert.equal((await profile(a.cookie, { name: '다른친구' })).status, 409);
+  assert.equal((await profile(a.cookie, { name: 'Claude' })).status, 400);
+  assert.equal((await profile(a.cookie, { name: '방장' })).status, 400);
+  assert.equal((await profile(a.cookie, { icon: '<script>' })).status, 400);
+  const changed = await profile(a.cookie, { name: '새이름', icon: '🦊' });
+  assert.equal(changed.status, 200); assert.equal(changed.body.icon, '🦊');
+  assert.equal((await f.owner('/api/profile', { name: '방장도' })).status, 404, 'owner has no friend profile route');
+  const state = (await f.remote('/api/state', { cookie: b.cookie })).body;
+  const me = state.participants.find(p => p.name === '새이름');
+  assert.equal(me.icon, '🦊');
+  assert.equal(state.messages.find(m => m.id === first).guestId, me.id);
+  assert.match(state.messages.at(-1).text, /옛이름님이 이름을 새이름\(으\)로 바꿨어요/);
+  assert.equal((await f.owner('/api/share')).body.guests.find(g => g.id === me.id).name, '새이름');
+  const { formatMessage } = await import('../lib/prompt.mjs');
+  const line = formatMessage(f.app.store.byId.get(first), 'claude', { userName: '방장', people: { [`guest:${me.id}`]: '새이름' } }, { attached: new Set() });
+  assert.match(line, /새이름\(친구\): 이름 바꾸기 전 메시지/);
+});
+
+test('phase 4: read positions only move forward and survive restart', async t => {
+  const f = await fixture(t);
+  const a = await f.join('읽음친구');
+  for (let n = 0; n < 3; n++) { f.tick(); await f.owner('/api/send', { text: `메시지 ${n}` }); }
+  const last = f.app.store.lastId;
+  assert.equal((await f.remote('/api/read', { cookie: a.cookie, body: { id: last } })).body.lastRead, last);
+  assert.equal((await f.remote('/api/read', { cookie: a.cookie, body: { id: last - 2 } })).body.lastRead, last);
+  assert.equal((await f.remote('/api/read', { cookie: a.cookie, body: { id: last + 999 } })).body.lastRead, last);
+  assert.equal((await f.remote('/api/read', { cookie: a.cookie, body: { id: 'x' } })).status, 400);
+  assert.equal((await f.remote('/api/state', { cookie: a.cookie })).body.lastRead, last);
+  assert.equal((await f.owner('/api/read', { id: last - 1 })).body.lastRead, last - 1);
+  assert.equal(f.app.view().lastRead, last - 1);
+  const disk = new Sharing(path.dirname(path.dirname(f.app.store.stateFile)));
+  assert.equal(Object.values(disk.data.guests)[0].lastRead, last);
+  assert.equal(JSON.parse(fs.readFileSync(f.app.store.stateFile, 'utf8')).room.lastRead, last - 1);
+});
+
+test('phase 4: missed-chat summary runs only on request, covers only what the reader may see, is metered and fails safely', async t => {
+  let fail = false;
+  const f = await fixture(t, (id, brief, prompt) => fail ? { ok: false, detail: 'RESOURCE_EXHAUSTED' } : { ok: true, text: '민수와 방장이 저녁 메뉴를 정했어요.' });
+  f.app.store.addMessage({ from: 'user', text: '입장 전 비밀 대화' });
+  f.app.store.writeNote('claude', '개인 메모 비밀');
+  const friend = await f.join('요약친구');
+  assert.equal((await f.remote('/api/summary', { cookie: friend.cookie, body: {} })).status, 400, 'nothing missed yet');
+  await f.owner('/api/send', { text: '저녁은 치킨으로 하자' });
+  f.app.store.addMessage({ from: 'claude', text: '집 기록', kind: 'house-build', mode: 'house' });
+  const result = await f.remote('/api/summary', { cookie: friend.cookie, body: {} });
+  assert.equal(result.status, 200); assert.match(result.body.summary, /저녁 메뉴/);
+  const prompt = f.calls.at(-1)[2];
+  assert.match(prompt, /저녁은 치킨으로 하자/); assert.match(prompt, /요약친구님이 자리를 비운 사이/);
+  for (const secret of ['입장 전 비밀', '개인 메모', '집 기록']) assert.ok(!prompt.includes(secret), secret);
+  assert.equal(f.calls.at(-1)[3].independent, true);
+  assert.equal((await f.remote('/api/state', { cookie: friend.cookie })).body.usage.used, 1);
+  assert.ok(!f.app.store.messages.some(m => m.text?.includes('저녁 메뉴를 정했')), 'the summary is private to the reader');
+  fail = true;
+  const failed = await f.remote('/api/summary', { cookie: friend.cookie, body: {} });
+  assert.equal(failed.status, 502);
+  assert.equal((await f.remote('/api/send', { cookie: friend.cookie, body: { text: '요약 실패해도 채팅 가능' } })).status, 200);
+  const guestId = (await f.owner('/api/share')).body.guests[0].id;
+  await f.owner('/api/share/limits', { guestId, limit: 2 });
+  assert.equal((await f.remote('/api/summary', { cookie: friend.cookie, body: {} })).status, 429);
+  await f.owner('/api/share/access', { permissions: { questions: false } });
+  assert.equal((await f.remote('/api/summary', { cookie: friend.cookie, body: {} })).status, 403);
+  fail = false;
+  assert.equal((await f.owner('/api/summary', {})).status, 200, 'owner summary uses the owner path');
+});
+
+test('phase 4: web push stores per-person subscriptions for known push services and sends private, deduplicated alerts', async t => {
+  const sent = [];
+  const f = await fixture(t, () => ({ ok: true, text: JSON.stringify({ action: 'pass' }) }), { pushSend: async (endpoint, headers, body) => { sent.push({ endpoint, headers, body }); return endpoint.includes('gone') ? 410 : 201; } });
+  const crypto = await import('node:crypto');
+  const ua = crypto.createECDH('prime256v1'); ua.generateKeys();
+  const auth = crypto.randomBytes(16);
+  const sub = (endpoint) => ({ endpoint, keys: { p256dh: ua.getPublicKey().toString('base64url'), auth: auth.toString('base64url') } });
+  const a = await f.join('알림친구'), b = await f.join('조용친구');
+  for (const endpoint of ['http://fcm.googleapis.com/x', 'https://127.0.0.1/x', 'https://evil.example/fcm.googleapis.com', 'https://fcm.googleapis.com:8443/x'])
+    assert.equal((await f.owner('/api/push/subscribe', { subscription: sub(endpoint) })).status, 400, endpoint);
+  assert.equal((await f.owner('/api/push/subscribe', { subscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/bad', keys: { p256dh: 'x', auth: 'y' } } })).status, 400);
+  assert.equal((await f.owner('/api/push/subscribe', { subscription: sub('https://fcm.googleapis.com/fcm/send/owner') })).status, 200);
+  assert.equal((await f.remote('/api/push/subscribe', { cookie: b.cookie, body: { subscription: sub('https://updates.push.services.mozilla.com/wpush/v2/gone') } })).status, 200);
+  assert.equal(f.app.view().push.subscribed, 1);
+  assert.equal((await f.remote('/api/state', { cookie: b.cookie })).body.push.subscribed, 1);
+  await f.remote('/api/send', { cookie: a.cookie, body: { text: '아주 비밀스러운 내용' } });
+  await f.wait(() => sent.length === 2);
+  const toOwner = sent.find(s => s.endpoint.includes('owner'));
+  assert.match(toOwner.headers.Authorization, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/);
+  assert.equal(toOwner.headers['Content-Encoding'], 'aes128gcm');
+  const body = toOwner.body, salt = body.subarray(0, 16), keyid = body.subarray(21, 86), cipher = body.subarray(86);
+  const hmac = (k, d) => crypto.createHmac('sha256', k).update(d).digest();
+  const prk = hmac(salt, hmac(hmac(auth, ua.computeSecret(keyid)), Buffer.concat([Buffer.from('WebPush: info\0'), ua.getPublicKey(), keyid, Buffer.from([1])])));
+  const decipher = crypto.createDecipheriv('aes-128-gcm', hmac(prk, Buffer.from('Content-Encoding: aes128gcm\0\x01', 'binary')).subarray(0, 16), hmac(prk, Buffer.from('Content-Encoding: nonce\0\x01', 'binary')).subarray(0, 12));
+  decipher.setAuthTag(cipher.subarray(-16));
+  const payload = JSON.parse(Buffer.concat([decipher.update(cipher.subarray(0, -16)), decipher.final()]).subarray(0, -1).toString());
+  assert.equal(payload.body, '알림친구님의 새 메시지'); assert.ok(!JSON.stringify(payload).includes('비밀'));
+  assert.equal(f.app.push.data.subs[`guest:${(await f.owner('/api/share')).body.guests.find(g => g.name === '조용친구').id}`], undefined, 'a 410 endpoint is removed');
+  f.tick(); await f.remote('/api/send', { cookie: a.cookie, body: { text: '또 보냄' } });
+  f.tick(); await f.remote('/api/send', { cookie: a.cookie, body: { text: '@방장 이거 봐줘' } });
+  await f.wait(() => sent.length === 3);
+  assert.equal(sent.at(-1).headers.Urgency, 'high');
+  f.tick(40000); f.app.runtime.post({ from: 'claude', text: 'AI 혼잣말' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(sent.length, 3, 'chat alerts are collapsed for 30s and AI chatter is off by default');
+  await f.owner('/api/push/unsubscribe', { endpoint: 'https://fcm.googleapis.com/fcm/send/owner' });
+  assert.equal(f.app.view().push.subscribed, 0);
+});
+
+test('phase 4: a friend cannot widen the summary range past their entry', async t => {
+  const f = await fixture(t, () => ({ ok: true, text: '요약' }));
+  f.app.store.addMessage({ from: 'user', text: '입장 전 비밀 대화' });
+  const friend = await f.join('범위친구');
+  await f.owner('/api/send', { text: '입장 후 대화' });
+  assert.equal((await f.remote('/api/summary', { cookie: friend.cookie, body: { since: 0 } })).status, 200);
+  assert.ok(!f.calls.at(-1)[2].includes('입장 전 비밀')); assert.match(f.calls.at(-1)[2], /입장 후 대화/);
 });

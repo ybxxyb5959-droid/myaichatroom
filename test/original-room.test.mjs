@@ -195,3 +195,23 @@ test('a malformed quota recovery probe does not announce a successful return', a
   assert.ok(s.app.room.quotaRest.gpt);
   assert.ok(!s.app.store.messages.some(m => m.kind === 'presence' && m.text.includes('들어옴')));
 });
+
+test('quiet participation wakes only explicitly called AIs; friend lines read as that friend, never the owner', async (t) => {
+  const s = await roomFixture(t, { reply: ({ id }) => ({ action: 'say', messages: [`${id} 답`] }) });
+  await s.start();
+  assert.equal((await s.post('/api/room', { aiIntensity: 'quiet' })).status, 200);
+  s.app.store.addMessage({ from: 'user', guestId: 'g-1', displayName: '민수', text: '친구가 한 말', ts: s.clock.now });
+  await s.send('그냥 혼잣말이야');
+  await s.advance(); await s.advance(30000); await s.advance(300000);
+  assert.equal(s.calls.length, 0, 'no wake, idle or spark turns in quiet mode');
+  await s.send('@Claude 너만 와줘');
+  await s.advance(); await s.advance(4000);
+  assert.deepEqual(s.calls.map((c) => c.id), ['claude']);
+  assert.match(s.calls[0].prompt, /민수\(친구\): 친구가 한 말/);
+  assert.doesNotMatch(s.calls[0].prompt, /방장: 친구가 한 말/);
+  await s.advance(30000);
+  assert.deepEqual(s.calls.map((c) => c.id), ['claude']);
+  assert.equal((await s.post('/api/room', { aiIntensity: 'normal' })).status, 200);
+  await s.send('다들 안녕'); await s.advance(); await s.advance(13000);
+  assert.ok(s.calls.length > 1, 'normal mode keeps the original autonomous say/pass');
+});

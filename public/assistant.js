@@ -4,6 +4,7 @@ import { voteCardHTML, bindVoteCard, updateVoteClocks } from './joint-vote.mjs';
 import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
 import { createDiscussionStage } from './discussion-stage.mjs';
 import { dotCharacters, dotCharacter } from './dot-characters.mjs';
+import { playCardNode, updatePlayClocks } from './play-ui.mjs';
 
 const $ = (s) => document.querySelector(s);
 const guest = document.body.dataset.role === 'guest';
@@ -70,7 +71,7 @@ let replyTo = null;
 const replyChip = document.createElement('button');
 replyChip.type = 'button'; replyChip.className = 'reply-quote'; replyChip.hidden = true;
 replyChip.setAttribute('aria-label', '답장 취소');
-const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id]);
+const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id, state.play?.polls, state.play?.games, state.play?.bookmarks]);
 const wave = (text) => `<span class="typing-wave" aria-label="${esc(text)}">${[...text].map((c, i) => `<span aria-hidden="true" style="--i:${i}">${esc(c)}</span>`).join('')}</span>`;
 const runOpen = new Map(); // discussion runs the user opened or closed by hand
 const input = $('#input');
@@ -88,7 +89,7 @@ function chatVoteNode(message) {
   const node = document.createElement('div'); node.dataset.id = message.id; node.dataset.voteId = message.voteId; node.className = 'sys k-house-vote';
   const vote = chatVotes.get(message.voteId), preference = vote && votePreference(vote);
   const open = vote?.status === 'open';
-  node.innerHTML = `<div class="chat-vote-notice"><b>🏠 ${esc(vote && !open ? vote.result || '투표가 마감되었습니다.' : message.text)}</b><div>${!vote || open ? `<button type="button" data-participate aria-expanded="${preference === 'join'}">참여</button><button type="button" data-decline>${preference === 'skip' ? '참여 안 함 ✓' : '참여 안 함'}</button>` : '<small>마감</small>'}</div></div><div class="chat-vote-card" ${open && preference === 'join' ? '' : 'hidden'}></div>`;
+  node.innerHTML = `<div class="chat-vote-notice"><b>🏠 ${esc(vote && !open ? vote.result || '투표가 마감되었습니다.' : message.text)}</b><div><button type="button" data-house-open>집 보기</button>${!vote || open ? `<button type="button" data-participate aria-expanded="${preference === 'join'}">참여</button><button type="button" data-decline>${preference === 'skip' ? '참여 안 함 ✓' : '참여 안 함'}</button>` : '<small>마감</small>'}</div></div><div class="chat-vote-card" ${open && preference === 'join' ? '' : 'hidden'}></div>`;
   const card = node.querySelector('.chat-vote-card');
   if (vote) { card.innerHTML = voteCardHTML(vote, chatHouse); bindVoteCard(card, vote, async body => { await api('/api/house/ballot', body); await loadChatVotes(); window.dispatchEvent(new Event('house-update')); }); }
   node.querySelector('[data-participate]')?.addEventListener('click', async () => {
@@ -152,7 +153,19 @@ async function update(body) {
   try { applyState(await api('/api/room', body)); return true; } catch (e) { toast(e.message); renderControls(); return false; }
 }
 const member = (id) => state.members.find((m) => m.id === id);
-const nameOf = (id) => id === 'user' ? state?.room.userName || '방장' : member(id)?.name || id;
+const nameOf = (id) => id === 'user' ? state?.room.userName || '방장'
+  : String(id).startsWith('guest:') ? state?.participants?.find(p => p.id === id.slice(6))?.name || '친구' : member(id)?.name || id;
+// Each friend keeps one colour from their stable id, so equal-looking names stay apart.
+const friendOf = (guestId) => state?.participants?.find((p) => p.id === guestId);
+const authorName = (m) => m.from === 'user' && m.guestId ? friendOf(m.guestId)?.name || m.displayName || '친구' : m.displayName || nameOf(m.from);
+const friendColor = (guestId) => { let h = 0; for (const c of String(guestId)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 62% 48%)`; };
+const selfReactor = () => guest ? `guest:${state.selfId}` : 'user';
+const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '😡'];
+const INTENSITY_HINTS = {
+  quiet: '@이름으로 부르거나 AI에게 답장할 때만 반응해요.',
+  normal: 'AI가 대화 흐름을 보고 말할지 넘길지 스스로 정해요.',
+  lively: 'AI끼리 @멘션으로 이어 말할 수 있어요. 친구 대화는 최초 응답 포함 최대 3회까지만 이어져요.',
+};
 const avatar = (id, cls = 'mini-av') => `<img class="${cls}" src="/avatars/${id}-pixel-128.png" alt="">`;
 const settingText = (s) => `${s.model}${s.effort ? ` · ${s.effort}` : ''}`;
 const kindText = (kind) => state.kinds[kind] || state.kinds.unknown;
@@ -203,7 +216,7 @@ function bodyHTML(m) {
   return atMe(plainBodyHTML(m));
 }
 function plainBodyHTML(m) {
-  const { head, tail } = FOLD_PHASES.has(m.phase) ? splitFold(m.text || '') : { head: m.text || '', tail: '' };
+  const { head, tail } = FOLD_PHASES.has(m.phase) || (m.text || '').length > 1600 ? splitFold(m.text || '') : { head: m.text || '', tail: '' };
   if (!tail) return renderMarkdown(head);
   const open = foldOpen.has(m.id);
   return `${renderMarkdown(head)}<div class="fold-tail" ${open ? '' : 'hidden'}>${renderMarkdown(tail)}</div>`
@@ -214,9 +227,15 @@ function messageNode(m) {
   node.dataset.id = m.id;
   if (m.from === 'system') {
     if (m.kind === 'house-vote') return chatVoteNode(m);
+    if (m.kind === 'play') return playCardNode(m, playContext(), playAct);
     if (m.kind === 'house-event') {
       node.className = 'sys k-house-event';
       node.innerHTML = houseEventHTML(m.text, m.houseEvent?.id);
+      return node;
+    }
+    if (m.kind === 'house-news') {
+      node.className = 'sys k-house-news';
+      node.innerHTML = `<span>${esc(m.text)}</span><button type="button" class="house-event-link" data-house-open>집짓기 보기</button>`;
       return node;
     }
     if (m.kind === 'house-build') {
@@ -226,7 +245,7 @@ function messageNode(m) {
       node.innerHTML = houseNoticeHTML(nameOf(m.by), m.text);
       return node;
     }
-    node.className = `sys ${m.kind === 'error' ? 'k-error' : ''} ${m.kind === 'cancelled' ? 'k-cancel' : ''} ${m.kind === 'presence' ? 'k-presence' : ''} ${m.kind === 'welcome' ? 'k-welcome' : ''}`;
+    node.className = `sys ${m.kind === 'error' ? 'k-error' : ''} ${m.kind === 'cancelled' ? 'k-cancel' : ''} ${m.kind === 'presence' ? 'k-presence' : ''} ${m.kind === 'welcome' ? 'k-welcome' : ''} ${m.kind === 'play-result' ? 'k-play-result' : ''}`;
     const badge = m.kind === 'error' ? `<span class="err-kind k-${esc(m.errorKind || 'unknown')}">${esc(kindText(m.errorKind))}</span> ` : '';
     const who = m.by && m.kind !== 'presence' ? `<b>${esc(nameOf(m.by))}${m.phase && m.phase !== 'answer' ? ` · ${esc(PHASES[m.phase] || m.phase)}` : ''}: </b>` : '';
     if (m.kind === 'digest') {
@@ -245,8 +264,11 @@ function messageNode(m) {
   }
   const mine = m.from === 'user' && (guest ? m.guestId === state.selfId : !m.guestId);
   const who = member(m.from);
-  node.className = `msg ${mine ? 'mine' : ''} ${m.phase === 'final' ? 'final' : ''}`;
-  const face = who ? `<img class="m-av clickable" data-profile="${who.id}" role="button" tabindex="0" src="/avatars/${who.id}-pixel-128.png" alt="${esc(who.name)} 프로필 보기">` : '<div class="m-av"></div>';
+  node.className = `msg ${mine ? 'mine' : ''} ${m.phase === 'final' ? 'final' : ''} ${m.from === 'user' && m.guestId ? 'friend' : ''}`;
+  if (m.from === 'user' && m.guestId) node.style.setProperty('--c', friendColor(m.guestId));
+  const friend = m.from === 'user' && m.guestId ? friendOf(m.guestId) : null;
+  const face = who ? `<img class="m-av clickable" data-profile="${who.id}" role="button" tabindex="0" src="/avatars/${who.id}-pixel-128.png" alt="${esc(who.name)} 프로필 보기">`
+    : m.guestId && !mine ? `<div class="m-av friend-av" aria-hidden="true">${esc(friend?.icon || [...authorName(m)][0] || '친')}</div>` : '<div class="m-av"></div>';
   const attachment = !m.attach?.path ? '' : /\.(png|jpe?g|gif|webp|svg)$/i.test(m.attach.path)
     ? `<img class="att-img" src="${mediaURL(m.attach.path)}" alt="${esc(m.attach.label || '첨부 사진')}">${m.attach.generated ? `<small>${esc(m.attach.label)}</small>` : ''}`
     : `<button type="button" class="model-pill" data-attachment>${esc(m.attach.path)} · 열기</button>`;
@@ -261,7 +283,7 @@ function messageNode(m) {
   const phase = m.phase === 'final' ? '<span class="phase final-tag">최종 답변</span>'
     : m.phase && m.phase !== 'answer' ? `<span class="phase">${esc(PHASES[m.phase] || m.phase)}</span>` : '';
   node.innerHTML = `${face}<div class="m-body">
-    <div class="m-head"><span class="n">${esc(m.displayName || who?.name || (m.from === 'user' ? state.room.userName : m.from))}${m.from === 'user' && m.guestId ? ' · 친구' : ''}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${addressed}${phase}</div>
+    <div class="m-head"><span class="n">${esc(m.from === 'user' && m.guestId ? authorName(m) : m.displayName || who?.name || (m.from === 'user' ? state.room.userName : m.from))}${m.from === 'user' && m.guestId ? ' · 친구' : ''}</span><span class="model">${esc(m.model || '')}${m.effort ? ` · ${esc(m.effort)}` : ''}</span>${addressed}${phase}</div>
     <div class="line"><div class="bubble"><div class="text">${bodyHTML(m)}</div>${attachment}${game}${memo}${sources}</div></div></div>`;
   const bubble = node.querySelector('.bubble');
   if (m.replyPreview) {
@@ -279,21 +301,27 @@ function messageNode(m) {
   const actions = document.createElement('div'); actions.className = 'chat-actions';
   const answer = document.createElement('button'); answer.type = 'button'; answer.textContent = '답장';
   answer.onclick = () => {
-    replyTo = m.id; replyChip.textContent = `${nameOf(m.from)}에게 답장 · ${(m.text || '').slice(0, 100)} ×`;
+    replyTo = m.id; replyChip.textContent = `${authorName(m)}에게 답장 · ${(m.text || '').slice(0, 100)} ×`;
     replyChip.hidden = false; input.before(replyChip); input.focus();
   };
   actions.append(answer);
+  const saved = state.play?.bookmarks?.includes(m.id);
+  const mark = document.createElement('button'); mark.type = 'button'; mark.className = 'bookmark-btn';
+  mark.textContent = saved ? '★ 저장됨' : '☆ 저장'; mark.setAttribute('aria-pressed', String(!!saved));
+  mark.title = saved ? '명장면 저장 취소' : '명장면으로 저장';
+  mark.onclick = () => playAct({ action: 'bookmark.toggle', id: m.id }).catch(() => {});
+  actions.append(mark);
   const picker = document.createElement('details'); picker.className = 'reaction-picker';
   const summary = document.createElement('summary'); summary.textContent = '공감';
   picker.append(summary); actions.append(picker);
-  picker.hidden = guest;
-  for (const emoji of guest ? [] : ['❤️', '👍', '😂', '😮', '😢', '😡']) {
+  for (const emoji of REACTIONS) {
     const people = m.reactions?.[emoji] || [];
     const button = document.createElement('button'); button.type = 'button';
     button.textContent = `${emoji}${people.length ? ` ${people.length}` : ''}`;
     button.title = people.length ? people.map(nameOf).join(', ') : `${emoji} 공감`;
-    button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(people.includes('user')));
+    button.setAttribute('aria-label', button.title); button.setAttribute('aria-pressed', String(people.includes(selfReactor())));
     button.onclick = async () => {
+      picker.open = false;
       try { await api('/api/react', { id: m.id, emoji }); } catch (e) { toast(e.message); }
     };
     (people.length ? actions : picker).append(button);
@@ -307,6 +335,41 @@ function messageNode(m) {
     openFile(m.game.path);
   });
   return node;
+}
+// ---------- play: polls, mini games, bookmarks ----------
+const personLabel = (id) => id === 'owner' ? state.room.userName || '방장' : nameOf(id);
+function playContext() {
+  const ai = IDS.slice().reverse().find((id) => member(id)?.enabled && member(id)?.available) || 'claude';
+  return { play: state.play, person: guest ? `guest:${state.selfId}` : 'owner', owner: !guest, nameOf: personLabel, aiName: nameOf(ai),
+    askAI: (text) => { input.value = text; autosize(); input.focus(); toast(guest ? '보내면 AI가 의견을 말해요 · 내 AI 호출 1회 차감' : '보내면 AI가 의견을 말해요.'); } };
+}
+async function playAct(body) {
+  try { const result = await api('/api/play', body); applyState(await api('/api/state')); return result; }
+  catch (e) { toast(e.message); throw e; }
+}
+setInterval(() => updatePlayClocks($('#msgs')), 1000);
+function jumpTo(id) {
+  const node = document.querySelector(`#msgs [data-id="${id}"]`);
+  if (!node) return false;
+  node.closest('details')?.setAttribute('open', '');
+  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 1600);
+  return true;
+}
+function renderSaved() {
+  const list = state.play?.saved || [];
+  $('#savedList').replaceChildren(...(list.length ? list.slice().reverse().map((item) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<button type="button" class="saved-open"><b>${esc(item.name)}</b><span>${esc(item.text)}</span><small>${esc(new Date(item.ts).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</small></button><button type="button" class="link-btn" aria-label="저장 취소">취소</button>`;
+    li.querySelector('.saved-open').onclick = async () => {
+      $('#savedDialog').close();
+      if (jumpTo(item.id)) return;
+      if (!guest) for (let n = 0; n < 15 && !jumpTo(item.id) && !$('#loadMore').hidden; n++) await loadOlder().catch(() => {});
+      if (!jumpTo(item.id)) toast('이 메시지는 지금 불러온 대화 범위 밖에 있어요.');
+    };
+    li.querySelector('.link-btn').onclick = async () => { await playAct({ action: 'bookmark.toggle', id: item.id }).catch(() => {}); renderSaved(); };
+    return li;
+  }) : [Object.assign(document.createElement('li'), { className: 'saved-empty', textContent: '아직 저장한 명장면이 없어요. 메시지 아래 ☆ 저장을 눌러 보세요.' })]));
 }
 const isDiscussion = (m) => m.mode === 'discussion' || /^(opinion|review|final)$/.test(m.phase || '');
 function runFooter(end) {
@@ -369,18 +432,65 @@ function renderMessages() {
       groups.get(m.runId).msgs.push(m);
     } else items.push(m);
   }
-  $('#msgs').replaceChildren(...items.map((x) => (x.msgs ? runNode(x) : messageNode(x))));
+  // Unchanged ordinary messages reuse their nodes, so a long history is not rebuilt on every update.
+  const epoch = JSON.stringify([state.participants?.map((p) => [p.id, p.name, p.icon]), state.room.userName, state.selfId, state.members?.map((m) => [m.id, m.color])]);
+  const fresh = new Map();
+  const nodes = items.map((x) => {
+    if (x.msgs || x.from === 'system') return x.msgs ? runNode(x) : messageNode(x);
+    const key = JSON.stringify([epoch, x, !!state.play?.bookmarks?.includes(x.id)]);
+    const hit = nodeCache.get(x.id);
+    const node = hit?.key === key ? hit.node : messageNode(x);
+    fresh.set(x.id, { key, node });
+    return node;
+  });
+  nodeCache = fresh;
+  const firstUnread = unreadMark === null ? null : state.messages.find((m) => m.id > unreadMark && m.from !== 'system' && !isMine(m));
+  const at = firstUnread ? nodes.findIndex((n) => n.dataset.id === String(firstUnread.id) || n.querySelector?.(`[data-id="${firstUnread.id}"]`)) : -1;
+  if (at >= 0) nodes.splice(at, 0, unreadDivider());
+  $('#msgs').replaceChildren(...nodes);
   if (chatHouse) renderLiveVotes();
   $('#empty').hidden = state.messages.some((m) => m.from !== 'system');
   renderedKey = messageKey();
 }
 const distance = () => tl.scrollHeight - tl.scrollTop - tl.clientHeight;
+let nodeCache = new Map();
+let unreadMark = null; // read position when this visit started; the divider and summary range start here
+const isMine = (m) => m.from === 'user' && (guest ? m.guestId === state.selfId : !m.guestId);
+const unreadCount = () => state.messages.filter((m) => m.id > (state.lastRead || 0) && m.from !== 'system' && !isMine(m)).length;
+function unreadDivider() {
+  const missed = state.messages.filter((m) => m.id > unreadMark && m.from !== 'system' && !isMine(m)).length;
+  const div = document.createElement('div');
+  div.className = 'unread-divider'; div.setAttribute('role', 'separator');
+  div.innerHTML = `<span>여기부터 안 읽은 메시지 ${missed}개</span>${missed >= 3 ? '<button type="button" class="link-btn" data-summary>놓친 대화 요약</button>' : ''}`;
+  div.querySelector('[data-summary]')?.addEventListener('click', openSummary);
+  return div;
+}
+let readTimer = 0;
+function maybeMarkRead() {
+  if (!state || document.visibilityState !== 'visible' || distance() > 100) return;
+  const last = state.messages.at(-1)?.id || 0;
+  if (last <= (state.lastRead || 0)) return;
+  clearTimeout(readTimer);
+  readTimer = setTimeout(async () => {
+    try { state.lastRead = (await api('/api/read', { id: last })).lastRead; } catch { /* retried on the next scroll */ }
+    if (distance() < 100) $('#jump').hidden = true;
+  }, 1200);
+}
+async function openSummary() {
+  $('#summaryBody').innerHTML = `<p class="play-wait">AI가 놓친 대화를 요약하는 중…${guest ? ' (내 AI 호출 1회)' : ''}</p>`;
+  $('#summaryDialog').showModal();
+  try {
+    const result = await api('/api/summary', { since: unreadMark ?? state.lastRead ?? 0 });
+    $('#summaryBody').innerHTML = `<div class="text">${renderMarkdown(result.summary)}</div><small class="hint">${esc(nameOf(result.by))} · 메시지 ${result.count}개 요약 · 나에게만 보여요</small>`;
+  } catch (e) { $('#summaryBody').innerHTML = `<p class="joint-vote-error">${esc(e.message)}</p>`; }
+}
 function showJump(text) { $('#jump').textContent = text; $('#jump').hidden = false; }
 function refreshMessages(grew) {
   const stick = distance() < 100;
   renderMessages();
   if (stick) tl.scrollTop = tl.scrollHeight;
-  else if (grew) showJump('새 메시지 ↓');
+  else if (grew) showJump(unreadCount() ? `새 메시지 ${unreadCount()}개 ↓` : '새 메시지 ↓');
+  maybeMarkRead();
 }
 function applyState(next) {
   const before = state?.messages.length || 0;
@@ -512,9 +622,14 @@ function renderHumans() {
   $('#humanMembers').replaceChildren(...people.filter(p => p.id !== 'owner').map(p => {
     const li = document.createElement('li');
     li.className = 'member human-member';
-    li.innerHTML = `<div class="me-av">${esc([...p.name][0] || '?')}</div>
+    li.style.setProperty('--c', friendColor(p.id));
+    li.innerHTML = `<div class="me-av friend">${esc(p.icon || [...p.name][0] || '?')}</div>
       <div class="m-info"><div class="m-name"><span>${esc(p.name)}</span></div>
-      <div class="m-status">친구 · ${p.online ? p.away ? '자리 비움' : '접속 중' : '오프라인'}</div></div>`;
+      <div class="m-status">친구${guest && p.id === state.selfId ? ' · 나' : ''} · ${p.online ? p.away ? '자리 비움' : '접속 중' : '오프라인'}</div></div>`;
+    if (guest && p.id === state.selfId) {
+      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'icon-btn human-kick'; edit.textContent = '✎';
+      edit.title = '내 프로필 바꾸기'; edit.setAttribute('aria-label', edit.title); edit.onclick = openProfileEditor; li.append(edit);
+    }
     if (!guest) {
       const kick = document.createElement('button');
       kick.type = 'button'; kick.className = 'icon-btn human-kick';
@@ -534,6 +649,8 @@ function renderHumans() {
   }));
 }
 function renderControls() {
+  $('#notifyBtn').setAttribute('aria-pressed', String((state.push?.subscribed || 0) > 0));
+  $('#notifyBtn').classList.toggle('on', (state.push?.subscribed || 0) > 0);
   if (guest) { renderGuestControls(); return; }
   const room = state.room;
   const busy = !!room.active || pending;
@@ -650,8 +767,11 @@ function renderGuestControls() {
   const remaining = Math.max(0, state.usage.remaining);
   const allowance = Math.max(0, state.usage.guestLimit);
   const percent = allowance ? Math.min(100, remaining / allowance * 100) : 0;
+  renderIntensity();
   const hint = $('#recipientHint');
-  hint.innerHTML = batteryHTML({ id: 'friend', remainingPct: percent }, false);
+  const status = { responding: 'AI가 답하는 중', queued: 'AI가 곧 읽어요', paused: 'Talk off · 사람끼리 대화 중', limited: 'AI 한도 소진 · 사람끼리 대화는 계속돼요', ready: '' }[state.autoReply] || '';
+  hint.innerHTML = batteryHTML({ id: 'friend', remainingPct: percent }, false)
+    + `<span class="friend-quota ${remaining ? '' : 'warn'}">내 AI ${remaining}/${allowance}회${status ? ` · ${esc(status)}` : ''}</span>`;
   const gauge = hint.querySelector('.batt');
   gauge.title = `내 AI 잔여 ${remaining}/${allowance}회 · 공용 ${state.usage.total}/${state.usage.limit}회 · 한도 소진 후에도 사람끼리 대화할 수 있어요.`;
   gauge.setAttribute('role', 'meter'); gauge.setAttribute('aria-label', '내 AI 남은 한도');
@@ -668,7 +788,16 @@ const BOOST_HINTS = {
   manual: '진지하게 답해 달라고 하거나 /boost @멤버로 부를 때만 켜요',
   off: '항상 평소 모델 설정으로 답해요',
 };
+function renderIntensity() {
+  const value = state.room.aiIntensity || 'normal';
+  $('#aiIntensitySeg').querySelectorAll('[data-intensity]').forEach(button => {
+    const on = button.dataset.intensity === value;
+    button.classList.toggle('on', on); button.setAttribute('aria-pressed', String(on)); button.disabled = guest;
+  });
+  $('#aiIntensityHint').textContent = INTENSITY_HINTS[value] + (guest ? ' · 방장만 바꿀 수 있어요.' : '');
+}
 function renderAuto() {
+  renderIntensity();
   $('#chatFrequencySeg').querySelectorAll('[data-frequency]').forEach(button => {
     const on = button.dataset.frequency === state.room.chatFrequency;
     button.classList.toggle('on', on); button.setAttribute('aria-pressed', String(on));
@@ -1225,7 +1354,7 @@ async function send() {
   try {
     await api('/api/send', { text: input.value.trim(), image, replyTo, ...(guest ? { discussion: guestDiscussion, webSearch: guestWebSearch } : {}) });
     if (guest) guestDiscussion = false;
-    replyTo = null; replyChip.hidden = true;
+    replyTo = null; replyChip.hidden = true; unreadMark = null;
     input.value = ''; autosize(); clearImage();
     applyState(await api('/api/state'));
     tl.scrollTop = tl.scrollHeight;
@@ -1266,6 +1395,99 @@ $('#examples').replaceChildren(...EXAMPLES.map((x) => {
   return b;
 }));
 $('#modelPicker').onclick = () => (menu ? closeMenu() : openMenu());
+function pollInput(n) { const field = document.createElement('input'); field.maxLength = 40; field.required = n <= 2; field.placeholder = `선택지 ${n}`; field.setAttribute('aria-label', field.placeholder); return field; }
+$('#pollBtn').onclick = () => { $('#pollForm').reset(); $('#pollOptions').replaceChildren(...[1, 2].map(pollInput)); $('#pollAdd').hidden = false; $('#pollDialog').showModal(); $('#pollQuestion').focus(); };
+$('#pollAdd').onclick = () => { const count = $('#pollOptions').children.length; if (count < 4) $('#pollOptions').append(pollInput(count + 1)); $('#pollAdd').hidden = count + 1 >= 4; };
+$('#pollForm').addEventListener('submit', async (event) => {
+  if (event.submitter?.value !== 'ok') return;
+  event.preventDefault(); $('#pollDialog').close();
+  const options = [...$('#pollOptions').querySelectorAll('input')].map((i) => i.value.trim()).filter(Boolean);
+  await playAct({ action: 'poll.create', question: $('#pollQuestion').value.trim(), options, minutes: Number($('#pollMinutes').value) }).catch(() => {});
+  tl.scrollTop = tl.scrollHeight;
+});
+$('#gameBtn').onclick = () => {
+  if (state.play?.games.some((g) => g.status === 'open' || g.status === 'preparing')) { toast('이미 진행 중인 게임이 있어요. 채팅창의 게임 카드에서 참여하세요.'); return; }
+  if (guest && !state.permissions?.games) { toast('방장이 미니게임 시작을 허용하면 시작할 수 있어요. 진행 중인 게임에는 언제든 참여할 수 있어요.'); return; }
+  $('#gameHint').textContent = guest ? '게임 시작 때 AI가 문제를 한 번 만들어요 (내 AI 호출 1회). 한도가 없으면 기본 문제로 진행해요.' : '게임 시작 때 AI가 문제를 한 번만 만들어요 (호출 1회). 선택·채점에는 AI를 쓰지 않아요.';
+  $('#gameDialog').showModal();
+};
+$('#gameDialog').addEventListener('submit', async (event) => {
+  const kind = event.submitter?.value;
+  event.preventDefault(); $('#gameDialog').close();
+  if (!['balance', 'quiz'].includes(kind)) return;
+  await playAct({ action: 'game.start', kind, topic: $('#gameTopic').value.trim() }).catch(() => {});
+  $('#gameTopic').value = ''; tl.scrollTop = tl.scrollHeight;
+});
+$('#savedBtn').onclick = () => { renderSaved(); $('#savedDialog').showModal(); };
+const PROFILE_ICONS = ['🐱', '🐶', '🐰', '🦊', '🐻', '🐼', '🐸', '🐧', '🐯', '🐨', '🐹', '🦄'];
+let profileIcon = null;
+function openProfileEditor() {
+  const me = friendOf(state.selfId);
+  $('#profileName').value = me?.name || state.name || '';
+  profileIcon = me?.icon || null;
+  const draw = () => $('#profileIcons').replaceChildren(...[null, ...PROFILE_ICONS].map((icon) => {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(icon === profileIcon)); b.textContent = icon || [...($('#profileName').value || '?')][0];
+    b.title = icon ? '이 아이콘 쓰기' : '이름 첫 글자'; b.onclick = () => { profileIcon = icon; draw(); };
+    return b;
+  }));
+  draw();
+  $('#profileDialog').showModal();
+}
+$('#profileForm').addEventListener('submit', async (event) => {
+  if (event.submitter?.value !== 'ok') return;
+  event.preventDefault();
+  try { await api('/api/profile', { name: $('#profileName').value.trim(), icon: profileIcon }); $('#profileDialog').close(); applyState(await api('/api/state')); toast('프로필을 바꿨어요.'); }
+  catch (e) { toast(e.message); }
+});
+const pushReady = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && isSecureContext;
+const keyBytes = (value) => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)), (c) => c.charCodeAt(0));
+const workerReady = () => Promise.race([navigator.serviceWorker.ready, new Promise((_, reject) => setTimeout(() => reject(new Error('서비스 워커가 준비되지 않았어요. 페이지를 새로고침해 주세요.')), 8000))]);
+async function currentSubscription() { try { return await (await workerReady()).pushManager.getSubscription(); } catch { return null; } }
+async function openNotify() {
+  const body = $('#notifyBody'), acts = $('#notifyActions');
+  const ios = /iPhone|iPad/i.test(navigator.userAgent), standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  acts.innerHTML = '<button value="cancel">닫기</button>';
+  const note = '<p class="hint">방장 PC와 단톡방 서버가 켜져 있을 때만 알림이 와요. 알림에는 메시지 내용 없이 보낸 사람만 표시돼요.</p>';
+  if (!pushReady()) {
+    body.innerHTML = `<p>이 브라우저에서는 푸시 알림을 쓸 수 없어요.</p><p class="hint">${ios && !standalone ? 'iPhone·iPad는 Safari 공유 메뉴에서 “홈 화면에 추가”로 앱을 설치한 뒤(iOS 16.4 이상) 설치된 앱에서 켤 수 있어요.' : !isSecureContext ? 'HTTPS 주소(Tailscale 연결 주소)로 접속해야 알림을 켤 수 있어요.' : '카카오톡 등 앱 안의 브라우저는 알림을 지원하지 않아요. Chrome·Edge·Firefox·Safari에서 열어 주세요.'}</p>${note}`;
+  } else if (Notification.permission === 'denied') {
+    body.innerHTML = `<p>이 사이트의 알림이 브라우저에서 차단되어 있어요.</p><p class="hint">주소창의 사이트 설정에서 알림을 허용한 뒤 다시 눌러 주세요.</p>${note}`;
+  } else {
+    const sub = await currentSubscription();
+    const on = !!sub && (state.push?.subscribed || 0) > 0;
+    body.innerHTML = `<p>${on ? '이 기기에서 알림이 켜져 있어요.' : '새 사람 메시지와 나를 부른 메시지(@이름)를 알려 드려요.'}</p>
+      <label class="notify-opt"><input type="checkbox" id="notifyPeople" checked> 사람들의 새 메시지 (30초에 한 번까지)</label>
+      <label class="notify-opt"><input type="checkbox" id="notifyAI"> AI 자율 대화도 알림 (기본 꺼짐)</label>
+      <p class="hint">나를 부른 메시지는 항상 알려요.</p>${note}`;
+    acts.innerHTML = `<button value="cancel">닫기</button>${on ? '<button type="button" id="notifyOff">알림 끄기</button>' : ''}<button type="button" class="primary" id="notifyOn">${on ? '설정 저장' : '알림 켜기'}</button>`;
+    $('#notifyOn').onclick = async () => {
+      try {
+        if (await Notification.requestPermission() !== 'granted') { toast('알림 권한이 허용되지 않았어요.'); return; }
+        const registration = await workerReady();
+        let subscription = await registration.pushManager.getSubscription();
+        const key = keyBytes(state.push.publicKey);
+        const stale = subscription?.options?.applicationServerKey && new Uint8Array(subscription.options.applicationServerKey).join() !== key.join();
+        if (stale) { await subscription.unsubscribe(); subscription = null; }
+        subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        await api('/api/push/subscribe', { subscription: subscription.toJSON(), prefs: { people: $('#notifyPeople').checked, ai: $('#notifyAI').checked } });
+        $('#notifyDialog').close(); applyState(await api('/api/state')); toast('알림을 켰어요.');
+      } catch (e) { toast(`알림을 켜지 못했어요: ${e.message}`); }
+    };
+    $('#notifyOff')?.addEventListener('click', async () => {
+      try { await api('/api/push/unsubscribe', { endpoint: sub.endpoint }); await sub.unsubscribe(); $('#notifyDialog').close(); applyState(await api('/api/state')); toast('이 기기의 알림을 껐어요.'); }
+      catch (e) { toast(e.message); }
+    });
+  }
+  if (!$('#notifyDialog').open) $('#notifyDialog').showModal();
+}
+$('#notifyBtn').onclick = () => openNotify().catch((e) => toast(e.message));
+// Phones: keep the composer above the on-screen keyboard (iOS ignores interactive-widget).
+if (window.visualViewport) {
+  const fit = () => document.documentElement.style.setProperty('--app-h', `${Math.round(visualViewport.height)}px`);
+  visualViewport.addEventListener('resize', fit); fit();
+  input.addEventListener('focus', () => setTimeout(() => { if (distance() < 160) tl.scrollTop = tl.scrollHeight; }, 300));
+}
 $('#debateToggle').onchange = (e) => { if (guest) { guestDiscussion = e.target.checked; renderControls(); } else update({ discussion: e.target.checked }); };
 
 // ---------- who will answer: a small preview under the input, from the server's local rules (no AI call) ----------
@@ -1304,8 +1526,9 @@ function updateMention() {
   const m = /(?:^|[\s(])@([A-Za-z가-힣]*)$/.exec(input.value.slice(0, caret));
   if (!m) { closeMention(); return; }
   const q = m[1].toLowerCase();
-  const items = [...IDS.slice().reverse().filter((id) => !q || ALIAS_HINT[id].some((a) => a.startsWith(q)) || nameOf(id).toLowerCase().startsWith(q)),
-    ...(!q || '모두'.startsWith(q) || 'all'.startsWith(q) ? ['all'] : [])];
+  const people = (state.participants || []).filter(p => p.id !== (guest ? state.selfId : 'owner') && (!q || p.name.toLowerCase().startsWith(q))).map(p => `human:${p.id}`);
+  const items = [...IDS.slice().reverse().filter((id) => member(id)?.enabled !== false && (!q || ALIAS_HINT[id].some((a) => a.startsWith(q)) || nameOf(id).toLowerCase().startsWith(q))),
+    ...(!q || '모두'.startsWith(q) || 'all'.startsWith(q) ? ['all'] : []), ...people].slice(0, 8);
   if (!items.length) { closeMention(); return; }
   mention = { from: caret - m[1].length - 1, to: caret, items, i: Math.min(mention?.i ?? 0, items.length - 1) };
   renderMention();
@@ -1317,13 +1540,14 @@ function renderMention() {
     const b = document.createElement('button');
     b.type = 'button'; b.setAttribute('role', 'option'); b.className = i === mention.i ? 'on' : '';
     if (id === 'all') b.innerHTML = '<b>모두</b><small>켜진 AI 전체</small>';
+    else if (id.startsWith('human:')) { const p = state.participants.find(x => x.id === id.slice(6)); b.innerHTML = `<b>${esc(p?.name || '')}</b><small>${p?.id === 'owner' ? '방장' : '친구'} · ${p?.online ? '접속 중' : '오프라인'}</small>`; }
     else b.innerHTML = `${avatar(id)}<b>${esc(nameOf(id))}</b><small>${esc(guest ? (member(id)?.enabled ? '참여 중' : '쉬는 중') : statusOf(id, bag()[id].model).text)}</small>`;
     b.addEventListener('mousedown', (e) => { e.preventDefault(); pickMention(id); });
     return b;
   }));
 }
 function pickMention(id) {
-  const at = `@${id === 'all' ? '모두' : nameOf(id)} `;
+  const at = `@${id === 'all' ? '모두' : id.startsWith('human:') ? state.participants.find(p => p.id === id.slice(6))?.name || '' : nameOf(id)} `;
   input.value = input.value.slice(0, mention.from) + at + input.value.slice(mention.to);
   const pos = mention.from + at.length;
   input.setSelectionRange(pos, pos);
@@ -1367,6 +1591,10 @@ $('#autoSleep').onchange = (e) => update({ auto: { sleepMinutes: Number(e.target
 $('#boostSeg').addEventListener('click', (e) => {
   const b = e.target.closest('[data-boost]');
   if (b) update({ boostMode: b.dataset.boost });
+});
+$('#aiIntensitySeg').addEventListener('click', event => {
+  const button = event.target.closest('[data-intensity]');
+  if (button && !guest) update({ aiIntensity: button.dataset.intensity });
 });
 $('#chatFrequencySeg').addEventListener('click', event => {
   const button = event.target.closest('[data-frequency]');
@@ -1423,7 +1651,7 @@ $('#msgs').addEventListener('click', async (e) => {
 });
 tl.addEventListener('scroll', () => {
   const far = distance();
-  if (far < 100) $('#jump').hidden = true;
+  if (far < 100) { $('#jump').hidden = true; maybeMarkRead(); }
   else if (far > 400 && $('#jump').hidden) showJump('최신 메시지로 ↓');
 });
 $('#jump').onclick = () => { tl.scrollTop = tl.scrollHeight; $('#jump').hidden = true; };
@@ -1453,41 +1681,62 @@ document.addEventListener('keydown', (e) => {
   }
 });
 addEventListener('resize', () => { if (tour) showTour(); });
-$('#loadMore').onclick = async () => {
-  try {
-    const height = tl.scrollHeight;
-    const older = await api(`/api/history?before=${state.messages[0]?.id || ''}`);
-    const known = new Set(state.messages.map((m) => m.id));
-    state.messages = [...older.messages.filter((m) => !known.has(m.id)), ...state.messages];
-    renderMessages();
-    tl.scrollTop += tl.scrollHeight - height;
-    $('#loadMore').hidden = older.messages.length < 200;
-  } catch (e) { toast(e.message); }
-};
+async function loadOlder() {
+  const height = tl.scrollHeight;
+  const older = await api(`/api/history?before=${state.messages[0]?.id || ''}`);
+  const known = new Set(state.messages.map((m) => m.id));
+  state.messages = [...older.messages.filter((m) => !known.has(m.id)), ...state.messages];
+  renderMessages();
+  tl.scrollTop += tl.scrollHeight - height;
+  $('#loadMore').hidden = older.messages.length < 200;
+}
+$('#loadMore').onclick = () => loadOlder().catch((e) => toast(e.message));
+let connFails = 0;
+function showConn(text, rejoin = false) {
+  const banner = $('#connBanner');
+  banner.textContent = text; banner.hidden = false;
+  if (rejoin && guest) { const link = document.createElement('a'); link.href = '/join'; link.textContent = ' 다시 입장하기'; banner.append(link); }
+}
 function connect() {
   const events = new EventSource('/events');
   events.addEventListener('house', () => window.dispatchEvent(new Event('house-update')));
   events.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
-  events.addEventListener('open', () => { if (guest) api('/api/share/presence', { away: document.hidden }).catch(() => {}); });
+  events.addEventListener('open', () => { api('/api/share/presence', { away: document.hidden }).catch(() => {}); });
+  events.addEventListener('open', () => {
+    connFails = 0;
+    if (!$('#connBanner').hidden) { $('#connBanner').hidden = true; api('/api/state').then(applyState).catch(() => {}); }
+  });
   events.addEventListener('open', loadChatVotes);
   events.addEventListener('message', (e) => {
     const m = JSON.parse(e.data);
-    if (state.messages.some((x) => x.id === m.id)) return;
+    if (state.messages.some((x) => x.id === m.id) || ['house-say', 'house-build'].includes(m.kind)) return;
     state.messages.push(m);
     refreshMessages(true);
   });
-  events.onerror = () => { $('#roomSub').textContent = '서버 연결 대기 중'; };
+  events.onerror = () => {
+    connFails++;
+    const closed = events.readyState === EventSource.CLOSED;
+    showConn(closed && connFails > 3 ? '연결할 수 없어요. 서버가 꺼졌거나 입장 권한이 해제되었을 수 있어요.' : '연결이 끊겼어요 · 다시 연결하는 중… (방장 PC와 서버가 켜져 있어야 해요)', closed && connFails > 3);
+    if (!guest) $('#roomSub').textContent = '서버 연결 대기 중';
+    if (closed) { events.close(); setTimeout(connect, Math.min(30000, 3000 * connFails)); }
+  };
 }
 addEventListener('room-reconnect', () => api('/api/state').then(applyState).catch(() => { $('#roomSub').textContent = '서버 연결 대기 · 방장 PC가 켜져 있어야 합니다'; }));
-document.addEventListener('visibilitychange', () => { if (guest) api('/api/share/presence', { away: document.hidden }).catch(() => {}); });
+document.addEventListener('visibilitychange', () => { api('/api/share/presence', { away: document.hidden }).catch(() => {}); maybeMarkRead(); });
 document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-house-open]')) window.dispatchEvent(new Event('house-open'));
   const button = e.target.closest('[data-house-event]');
   if (button) window.dispatchEvent(new CustomEvent('house-open-event', { detail: { id: Number(button.dataset.houseEvent) } }));
 });
 try {
-  applyState(await api('/api/state'));
+  const first = await api('/api/state');
+  unreadMark = first.lastRead || 0;
+  if (!first.messages.some((m) => m.id > unreadMark && m.from !== 'system' && !(m.from === 'user' && (guest ? m.guestId === first.selfId : !m.guestId)))) unreadMark = null;
+  applyState(first);
   await loadChatVotes();
-  tl.scrollTop = tl.scrollHeight;
+  const divider = $('#msgs .unread-divider');
+  if (divider) divider.scrollIntoView({ block: 'start' }); else tl.scrollTop = tl.scrollHeight;
+  maybeMarkRead();
   $('#loadMore').hidden = guest || state.messages.length < 300;
   connect();
   if (!guest && !state.room.onboarding.done) openSetup();
