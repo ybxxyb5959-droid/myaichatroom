@@ -309,8 +309,6 @@ button:disabled { opacity: .5; cursor: default; }
 #chatFrequencyField { flex-wrap: wrap; }
 #chatFrequencySeg { width: 100%; flex-wrap: nowrap; gap: 2px; }
 #chatFrequencySeg button { flex: 1; min-width: 0; padding-inline: 2px; white-space: nowrap; font-size: 11px; }
-.task-continue { display: inline-flex; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 7px 10px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); font: inherit; font-size: 12px; cursor: pointer; }
-.task-continue svg { width: 16px; height: 16px; }
 /* Keep all three boost choices on a full-width row. */
 .field:has(#boostSeg) { flex-wrap: wrap; row-gap: 6px; }
 .field:has(#boostSeg) #boostSeg { width: 100%; flex-shrink: 1; }

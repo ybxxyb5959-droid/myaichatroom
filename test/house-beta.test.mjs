@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { House } from '../lib/house.mjs';
-import { advanceStory, cast, counts, storyPrompt } from '../lib/house-story.mjs';
+import { advanceStory, cast, counts, storyPrompt, canOpenVote } from '../lib/house-story.mjs';
 import { acceptProposal, advanceVotes } from '../lib/house-votes.mjs';
 
 function house(t) {
@@ -15,15 +15,21 @@ function house(t) {
 test('shared episode records one ballot per human/AI, persists reconnects and applies majority once', t => {
   let h = house(t);
   const humans = ['owner', 'friend'], ai = h.ids;
+  h.s.floors = { '1,1': 'wood' };
   advanceStory(h, 100, humans, ai);
   const v = h.s.story.current, allowed = { humans, ai };
+  assert.equal(v.status, 'discussion');
+  cast(v, 'ai:gpt', 0, 100, { ...allowed, opinion: '정원을 선택할게' });
+  cast(v, 'ai:claude', 1, 100, { ...allowed, opinion: '바비큐장을 선택할게' });
+  advanceStory(h, 100, humans, ai);
+  assert.equal(v.status, 'open');
+  assert.equal(v.deadline, 180100);
   cast(v, 'human:owner', 1, 101, allowed);
   cast(v, 'human:friend', 1, 102, allowed);
-  cast(v, 'ai:gpt', 0, 103, { ...allowed, opinion: '정원을 선택할게' });
   assert.throws(() => cast(v, 'human:friend', 0, 104, allowed), /이미 투표/);
   assert.throws(() => cast(v, 'human:intruder', 0, 104, allowed), /접속/);
   h.save(); h = new House(h.file, { ids: ai, names: {} });
-  assert.deepEqual(counts(h.s.story.current), [1, 2]);
+  assert.deepEqual(counts(h.s.story.current), [1, 3]);
   assert.throws(() => cast(h.s.story.current, 'human:owner', 0, 105, allowed), /이미 투표/);
   assert.throws(() => cast(h.s.story.current, 'ai:claude', 0, v.deadline, allowed), /마감/);
   assert.ok(advanceStory(h, v.deadline, humans, ai)); h.save();
@@ -36,14 +42,43 @@ test('shared episode records one ballot per human/AI, persists reconnects and ap
 test('no humans preserves autonomy; ties choose declared A and prior environment changes later episodes', t => {
   const h = house(t);
   assert.equal(advanceStory(h, 1, [], h.ids), false);
+  assert.equal(advanceStory(h, 1, ['owner'], h.ids), false, 'no milestone means no event');
+  h.s.floors = { '1,1': 'wood' };
   advanceStory(h, 2, ['owner'], h.ids);
   const v = h.s.story.current;
-  advanceStory(h, v.deadline, [], h.ids);
+  for (const id of h.ids) cast(v, `ai:${id}`, 0, 3, { humans: ['owner'], ai: h.ids, opinion: '정원이 좋아요' });
+  advanceStory(h, 4, ['owner'], h.ids);
+  assert.equal(v.status, 'applied', 'consensus does not open a human vote');
+  assert.equal(h.s.voteMeta.count, 0);
   assert.equal(h.s.story.environment.yard, 'garden');
-  h.s.story.environment.roof = 30;
-  advanceStory(h, h.s.story.nextAt, ['owner'], h.ids);
+  assert.equal(advanceStory(h, 1000000, ['owner'], h.ids), false, 'time alone never creates an event');
+  h.s.walls = { '1,1': { c: 'cream' } };
+  advanceStory(h, 1000001, ['owner'], h.ids);
   assert.equal(h.s.story.current.key, 'rain');
   assert.deepEqual(h.s.story.current.ballots, {}, 'never synthesize AI choices');
+});
+test('story and decor share the cooldown and daily budget; unclear choices never manufacture a vote', t => {
+  const h = house(t), allowed = { humans: ['owner'], ai: h.ids };
+  h.s.floors = { '1,1': 'wood' };
+  advanceStory(h, 10, allowed.humans, allowed.ai);
+  const v = h.s.story.current;
+  assert.throws(() => cast(v, 'human:owner', 0, 11, allowed), /明|명시/);
+  assert.throws(() => cast(v, 'ai:gpt', 0, 11, allowed), /명시/);
+  advanceStory(h, v.deadline, allowed.humans, allowed.ai);
+  assert.equal(v.status, 'skipped');
+  assert.equal(h.s.story.environment.yard, undefined);
+  h.s.walls = { '1,1': { c: 'cream' } };
+  h.s.voteMeta.lastAt = 20; h.s.voteMeta.count = 1;
+  assert.equal(advanceStory(h, 21, allowed.humans, allowed.ai), false);
+  advanceStory(h, 1800020, allowed.humans, allowed.ai);
+  const rain = h.s.story.current;
+  cast(rain, 'ai:gpt', 0, 1800021, { ...allowed, opinion: '지붕 수리' });
+  cast(rain, 'ai:claude', 1, 1800022, { ...allowed, opinion: '자재 보호' });
+  advanceStory(h, 1800023, allowed.humans, allowed.ai);
+  assert.equal(rain.status, 'open'); assert.equal(h.s.voteMeta.count, 2);
+  h.s.voteMeta.count = 3;
+  assert.equal(canOpenVote(h, 3600023), false, 'story and decor share the daily cap');
+  assert.equal(canOpenVote(h, 86400000 + 3600023), true, 'next day resets the cap');
 });
 test('real decor proposals seed only their authors; shared majority waits for deadline and commits once', t => {
   const h = house(t); h.s.mode = 'auto';

@@ -54,13 +54,15 @@ const DEFAULTS = {
   },
   synthesizer: 'claude',
   autoModels: { claude: 'haiku', gemini: 'gemini-3.8-flash-low' },
-  modelCatalog: { gemini: ['gemini-3.8-flash-medium'] },
+  modelCatalog: { gemini: ['gemini-3.8-flash-medium', 'gemini-3.6-flash-low'] },
 };
 export function loadConfig(configFile = process.env.CHATROOM_CONFIG || path.join(ROOT, 'config.json')) {
   const user = readJsonFile(configFile, {});
   return { ...DEFAULTS, ...user, port: Number(process.env.PORT || user.port || DEFAULTS.port),
     spark: { ...DEFAULTS.spark, ...user.spark }, boost: { ...DEFAULTS.boost, ...user.boost },
     autoModels: { ...DEFAULTS.autoModels, ...user.autoModels },
+    modelCatalog: { ...DEFAULTS.modelCatalog, ...user.modelCatalog,
+      gemini: [...new Set([...DEFAULTS.modelCatalog.gemini, ...(user.modelCatalog?.gemini || [])])] },
     agents: Object.fromEntries(IDS.map((id) => [id, { ...DEFAULTS.agents[id], ...user.agents?.[id] }])),
     debateModels: Object.fromEntries(IDS.map((id) => [id, { ...DEFAULTS.debateModels[id], ...user.debateModels?.[id] }])) };
 }

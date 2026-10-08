@@ -88,7 +88,7 @@ function chatVoteNode(message) {
   const node = document.createElement('div'); node.dataset.id = message.id; node.dataset.voteId = message.voteId; node.className = 'sys k-house-vote';
   const vote = chatVotes.get(message.voteId), preference = vote && votePreference(vote);
   const open = vote?.status === 'open';
-  node.innerHTML = `<div class="chat-vote-notice"><b>🏠 ${esc(message.text)}</b><div>${!vote || open ? `<button type="button" data-participate aria-expanded="${preference === 'join'}">참여</button><button type="button" data-decline>${preference === 'skip' ? '참여 안 함 ✓' : '참여 안 함'}</button>` : '<small>투표가 마감되었습니다.</small>'}</div></div><div class="chat-vote-card" ${preference === 'join' ? '' : 'hidden'}></div>`;
+  node.innerHTML = `<div class="chat-vote-notice"><b>🏠 ${esc(vote && !open ? vote.result || '투표가 마감되었습니다.' : message.text)}</b><div>${!vote || open ? `<button type="button" data-participate aria-expanded="${preference === 'join'}">참여</button><button type="button" data-decline>${preference === 'skip' ? '참여 안 함 ✓' : '참여 안 함'}</button>` : '<small>마감</small>'}</div></div><div class="chat-vote-card" ${open && preference === 'join' ? '' : 'hidden'}></div>`;
   const card = node.querySelector('.chat-vote-card');
   if (vote) { card.innerHTML = voteCardHTML(vote, chatHouse); bindVoteCard(card, vote, async body => { await api('/api/house/ballot', body); await loadChatVotes(); window.dispatchEvent(new Event('house-update')); }); }
   node.querySelector('[data-participate]')?.addEventListener('click', async () => {
@@ -299,16 +299,6 @@ function messageNode(m) {
     (people.length ? actions : picker).append(button);
   }
   node.querySelector('.m-body').append(actions);
-  const question = state.messages.find(message => message.id === m.replyTo && message.from === 'user')
-    || (who && state.messages.findLast(message => message.id < m.id && message.from === 'user'));
-  if (!guest && who && question && !question.guestId && (!isDiscussion(m) || m.phase === 'final')
-      && (m.deep || question.workbenchEligible || m.phase === 'final' || /資料|자료|문서|보고서|작성|조사|리서치|제안서|기획서/.test(question.text))) {
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'task-continue';
-    button.dataset.questionId = String(question.id);
-    button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8m-8 4h6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>작업대에서 이어하기';
-    button.onclick = () => window.dispatchEvent(new CustomEvent('task-continue', { detail: { text: question.text } }));
-    actions.before(button);
-  }
   if (who) node.style.setProperty('--c', who.color);
   node.querySelector('[data-note]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.note.path); });
   node.querySelector('[data-attachment]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.attach.path); });

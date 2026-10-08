@@ -637,7 +637,9 @@ test('Talk OFF cancels a guest response and queued batches, and cannot be overri
 });
 
 test('beta shared house and ballots use server identity across owner devices and guest reconnects', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, null, { ids: ['claude', 'gpt'] });
+  f.app.runtime.setEnabled('claude', true); f.app.runtime.setEnabled('gpt', true);
+  f.app.house.s.floors = { '1,1': 'wood' };
   const friend = await f.join('투표친구'), ownerA = await f.join('', 'owner'), ownerB = await f.join('', 'owner');
   for (const cookie of [friend.cookie, ownerA.cookie, ownerB.cookie]) {
     await new Promise((resolve, reject) => {
@@ -648,6 +650,9 @@ test('beta shared house and ballots use server identity across owner devices and
     });
   }
   await f.app.houseRuntime.tick();
+  const pendingId = f.app.house.s.story.current.id;
+  f.app.houseRuntime.ballot('claude', { id: pendingId, choice: 0 }, true, '정원을 선택할게');
+  f.app.houseRuntime.ballot('gpt', { id: pendingId, choice: 1 }, true, '바비큐장을 선택할게');
   const state = (await f.remote('/api/house', { cookie: friend.cookie })).body;
   assert.equal(state.role, 'guest'); assert.equal(state.player, null);
   const id = state.story.current.id;
@@ -662,10 +667,10 @@ test('beta shared house and ballots use server identity across owner devices and
   assert.equal((await cast(friend.cookie, 1, { voter: 'ai:gpt', role: 'owner' })).status, 200);
   assert.equal((await cast(friend.cookie, 0)).status, 409);
   assert.equal((await f.remote('/api/house/undo', { cookie: friend.cookie, body: {} })).status, 403);
-  f.tick(60001); await f.app.houseRuntime.tick();
+  f.tick(180001); await f.app.houseRuntime.tick();
   const shared = (await f.remote('/api/house', { cookie: friend.cookie })).body;
   assert.equal(shared.story.current.status, 'applied');
-  assert.deepEqual(shared.story.current.counts, [0, 2]);
+  assert.deepEqual(shared.story.current.counts, [1, 3]);
   assert.equal(shared.story.current.myChoice, 1);
   assert.equal((await cast(friend.cookie, 0)).status, 409);
   assert.equal((await f.owner('/api/house')).body.story.environment.yard, 'bbq');

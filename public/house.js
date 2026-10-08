@@ -160,7 +160,7 @@ $('#hsMode').addEventListener('click', (e) => {
 function renderJoint(vote, target, story = false) {
   target.hidden = !vote;
   if (!vote) return;
-  const expanded = target.querySelector('details')?.open ?? matchMedia('(min-width: 641px)').matches;
+  const expanded = vote.status === 'open' && (target.querySelector('details')?.open ?? false);
   target.innerHTML = `<details ${expanded ? 'open' : ''}><summary class="joint-vote-summary">${voteHeaderHTML(vote)}<small>${story ? `EPISODE ${String(vote.episode).padStart(2, '0')} · ` : ''}${esc(vote.title || '공동 인테리어 투표')}</small></summary>${voteCardHTML(vote, data, { header: false })}</details>`;
   bindVoteCard(target, vote, async body => {
     await send('/api/house/ballot', body);

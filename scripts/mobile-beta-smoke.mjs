@@ -7,6 +7,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { createAssistantServer, loadConfig } from '../server.mjs';
 import { House } from '../lib/house.mjs';
+import { advanceStory, cast } from '../lib/house-story.mjs';
 const modulePath = process.env.CHATROOM_PLAYWRIGHT;
 if (!modulePath) throw new Error('Set CHATROOM_PLAYWRIGHT to an installed playwright/index.mjs');
 const { chromium } = await import(pathToFileURL(modulePath));
@@ -14,6 +15,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'room-mobile-beta-'));
 const home = new House(path.join(root, 'data', 'house.json'), { ids: ['gemini', 'gpt', 'claude'], names: {} });
 home.s.floors = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`${12 + i % 4},${12 + Math.floor(i / 4)}`, 'wood']));
 home.s.walls = Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`${12 + i},11`, { c: 'cream', door: i === 1 }]));
+// Explicit Mock choices create the disputed milestone used by this UI smoke.
+const mockNow = Date.now(), mockVoters = { humans: ['owner'], ai: home.ids };
+advanceStory(home, mockNow, mockVoters.humans, mockVoters.ai);
+cast(home.s.story.current, 'ai:claude', 0, mockNow, { ...mockVoters, opinion: 'Mock: 정원' });
+cast(home.s.story.current, 'ai:gpt', 1, mockNow, { ...mockVoters, opinion: 'Mock: 바비큐장' });
+advanceStory(home, mockNow, mockVoters.humans, mockVoters.ai);
 home.save();
 let target, browser, proxy;
 const app = createAssistantServer({ root, cfg: loadConfig(path.join(root, 'config.json')),
@@ -68,6 +75,23 @@ try {
     if (width < 600) await page.waitForFunction(() => document.querySelector('#side').getBoundingClientRect().right <= 1);
     if (process.env.CHATROOM_SMOKE_OUTPUT) await page.screenshot({ path: path.join(process.env.CHATROOM_SMOKE_OUTPUT, `friend-chat-${width}.png`) });
     await page.locator('#houseBtn').click(); await page.locator('#hsStory').waitFor({ state: 'visible' });
+    if (width < 600) {
+      for (const menu of ['hsPlan', 'hsProgress', 'hsDiary']) {
+        const toggle = page.locator(`[data-panel="${menu}"]`);
+        await toggle.click();
+        await page.locator(`#${menu}`).waitFor({ state: 'visible' });
+        await page.locator('#hsStory').waitFor({ state: 'hidden' });
+        await page.locator('#hsVote').waitFor({ state: 'hidden' });
+        // Server refreshes must not restore an overlapping vote card.
+        const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === '/api/house');
+        await page.evaluate(() => window.dispatchEvent(new Event('house-update')));
+        await refreshed;
+        assert.equal(await page.locator('#hsStory').isVisible(), false);
+        await toggle.click();
+        await page.locator('#hsStory').waitFor({ state: 'visible' });
+      }
+      console.log(`PASS ${width}px: mobile detail menus hide votes and closing restores them`);
+    }
     if (width < 600) await page.locator('#hsStory summary').click();
     await page.locator('#hsStory [data-joint="1"]').click();
     await page.locator('#hsStory button[aria-pressed="true"]').waitFor();

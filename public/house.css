@@ -163,3 +163,8 @@
 .chat-vote-card { margin-top: 10px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
 .chat-vote-card[hidden] { display: none; }
 @media(max-width:640px) { .house .hs-story { width: calc(100vw - 12px); max-height: 34vh; padding: 10px; } .chat-vote-card { padding: 14px; border-radius: 18px; } .joint-vote h3 { font-size: 17px; } .joint-vote-story { padding: 12px; } }
+@media (max-width: 640px) {
+  /* Let mobile detail menus take the space used by floating vote cards. */
+  .house:has(.hs-tools [data-panel][aria-expanded="true"]) :is(.hs-story, .hs-vote),
+  .house:has(.hs-room:not([hidden])) :is(.hs-story, .hs-vote) { display: none; }
+}
