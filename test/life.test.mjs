@@ -176,6 +176,7 @@ test('a completed saved house resumes life while its original data is backed up'
   let s = await start(t, root, { clock });
   await s.post('/api/check/login', {});
   await s.post('/api/room', { auto: { on: true, level: 'high' } });
+  await s.post('/api/house/active', { active: true });
   await s.post('/api/room', { enabled: { gemini: false } });
   clock.t += 16 * 60000;
   await s.app.tick();
@@ -199,6 +200,7 @@ test('quota exhaustion removes the member while other members continue house lif
   usage.onUpdate();
   await s.post('/api/check/login', {});
   await s.post('/api/room', { auto: { on: true, level: 'high' } });
+  await s.post('/api/house/active', { active: true });
   clock.t += 60000;
   await s.app.tick();
   clock.t += 60 * 60000; await s.app.tick();

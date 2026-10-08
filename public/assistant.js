@@ -23,8 +23,8 @@ $('#ownerMore').querySelectorAll('[data-head-action]').forEach(button => {
 document.addEventListener('click', event => { if (!$('#ownerMore').contains(event.target)) $('#ownerMore').open = false; });
 $('#ownerMore').addEventListener('keydown', event => { if (event.key === 'Escape') { $('#ownerMore').open = false; $('#ownerMore summary').focus(); } });
 const IDS = ['gemini', 'gpt', 'claude'];
-const PHASES = { answer: '답변', opinion: '독립 의견', review: '교차 검토', final: '최종 정리' };
-const STEPS = ['opinion', 'review', 'final'];
+const PHASES = { answer: '답변', opinion: '독립 의견', review: '교차 검토', selection: '최종 답변 AI 선정 중', final: '최종 정리' };
+const STEPS = ['opinion', 'review', 'selection', 'final'];
 const SOURCES = { cli: { gpt: 'ChatGPT가 알려 준 목록', claude: 'Claude에 포함' }, help: 'Claude 도움말', config: '앱 기본·추천', custom: '직접 입력' };
 const LIST_NOTE = {
   gpt: '이 컴퓨터의 ChatGPT가 알려 준 모델 목록이에요. 내 계정에서 실제로 되는지는 직접 써 봐야 알 수 있어요.',
@@ -326,7 +326,7 @@ function runNode({ runId, msgs }) {
   const node = document.createElement('section');
   node.className = 'run';
   const running = state.room.active?.id === runId;
-  const final = msgs.find((m) => m.phase === 'final');
+  const final = msgs.find((m) => m.phase === 'final' && m.from !== 'system');
   const end = msgs.find((m) => m.kind === 'complete' || m.kind === 'cancelled');
   const steps = msgs.filter((m) => m !== final && m !== end);
   const people = [...new Map(msgs.filter((m) => member(m.from)).map((m) => [m.from, m])).values()];
@@ -346,6 +346,15 @@ function runNode({ runId, msgs }) {
     if (details.open === byDefault) runOpen.delete(runId); else runOpen.set(runId, details.open);
   });
   node.append(head, details);
+  if (synth) {
+    const selection = document.createElement('p');
+    selection.className = 'ms-note';
+    selection.textContent = `최종 답변 담당: ${nameOf(synth)} · ${end?.summary?.selectionReason || (running ? state.room.active.selectionReason : '') || msgs.findLast(m => m.kind === 'selection')?.selectionReason || ''}`;
+    node.append(selection);
+  } else if (running && state.room.active.phase === 'selection') {
+    const selection = document.createElement('p');
+    selection.textContent = '최종 답변 AI 선정 중'; node.append(selection);
+  }
   if (final) node.append(messageNode(final));
   if (end) node.append(runFooter(end));
   return node;
@@ -573,7 +582,7 @@ function renderControls() {
   if (room.discussion) {
     const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
     pill.style.setProperty('--c', 'var(--accent)');
-    pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">토론</span><span class="pk-model">${joined.length}명 · 종합 ${esc(nameOf(room.synthesizer))}</span><span class="caret">⌄</span>`;
+    pill.innerHTML = `<span class="pk-stack">${joined.map((id) => avatar(id)).join('')}</span><span class="pk-name">토론</span><span class="pk-model">${joined.length}명 · 종합 자동 선정</span><span class="caret">⌄</span>`;
   } else {
     const joined = IDS.filter((id) => room.enabled[id] && state.catalog[id].available);
     pill.style.setProperty('--c', 'var(--accent)');
@@ -902,7 +911,7 @@ function renderMenu() {
       ${IDS.map((id) => `<div class="mm-ai ${room.enabled[id] ? '' : 'off'}" style="--c:${member(id).color}">
         <label class="switch"><input type="checkbox" data-join="${id}" ${room.enabled[id] && state.catalog[id].connected ? 'checked' : ''} aria-label="${esc(nameOf(id))} 대화 참여"><span></span></label>
         ${menuRow(`ai:${id}`, `${avatar(id)}<b>${esc(nameOf(id))}</b>`, esc(state.catalog[id].available ? shortSetting(id, bag()[id]) : '연결 설정 필요'))}</div>`).join('')}
-      ${room.discussion ? menuRow('synth', '종합 담당', esc(nameOf(room.synthesizer)), avatar(room.synthesizer)) : ''}`;
+      ${room.discussion ? '<p class="ms-note">최종 답변 담당은 참여 AI들의 상호 평가로 자동 선정합니다.</p>' : ''}`;
   }
   main.insertAdjacentHTML('beforeend', '<div class="mm-foot"><button type="button" class="link-btn" data-act="setup">연결 확인 · 처음 설정</button></div>');
   main.querySelectorAll('[data-sub]').forEach((b) => b.addEventListener('click', () => {
@@ -930,11 +939,6 @@ function renderSub() {
     sub.innerHTML = `<div class="ms-head">${back}<b>생각 수준</b><small>${id === 'gpt' ? 'Codex 목록 기준' : 'Claude CLI 도움말 기준'}</small></div>
       ${['', ...modelEntry(id, s.model).efforts].map((v) => `<button type="button" class="ms-row ${s.effort === v ? 'cur' : ''}" data-effort="${v}"><span class="ms-name">${esc(effortLabel(id, v))}</span>${s.effort === v ? '<span class="check">✓</span>' : ''}</button>`).join('')}`;
     sub.querySelectorAll('[data-effort]').forEach((b) => b.addEventListener('click', () => pick({ models: { [id]: { model: s.model, effort: b.dataset.effort } } })));
-  } else if (menu.sub === 'synth') {
-    sub.innerHTML = `<div class="ms-head">${back}<b>종합 담당</b><small>최종 답변을 씁니다</small></div>
-      ${IDS.map((id) => `<button type="button" class="ms-row ${room.synthesizer === id ? 'cur' : ''}" data-synth="${id}" style="--c:${member(id).color}">${avatar(id)}<span class="ms-name">${esc(nameOf(id))}</span>${room.enabled[id] ? '' : '<small>참여 안 함</small>'}${room.synthesizer === id ? '<span class="check">✓</span>' : ''}</button>`).join('')}
-      <p class="ms-note">종합 담당이 실패하거나 빠지면 다른 참여 AI가 정리하고, 그 사실을 표시합니다.</p>`;
-    sub.querySelectorAll('[data-synth]').forEach((b) => b.addEventListener('click', () => pick({ synthesizer: b.dataset.synth })));
   } else {
     const debateId = menu.sub.startsWith('ai:') ? menu.sub.slice(3) : null;
     const target = debateId || menu.addId;

@@ -139,6 +139,28 @@ test('interrupted persisted jobs become explicit failures on restart, not resume
   assert.equal(f.requests.length, 0);
 });
 
+test('workbench cancellation does not abort an ordinary turn and room cancellation leaves a workbench run intact', async t => {
+  let finishTask, finishChat;
+  const f = await fixture(t, { analyze: () => new Promise(resolve => { finishTask = resolve; }) });
+  f.room.reply(() => new Promise(resolve => { finishChat = resolve; }));
+  await f.draft('작업 분석'); await f.start();
+  const task = (await f.get()).running;
+  await f.room.start(); await f.room.send('@GPT 질문'); await f.room.app.runtime.tick();
+  f.room.clock.now += 2000;
+  const ordinary = f.room.app.runtime.tick();
+  const signal = f.room.calls.find(c => c.id === 'gpt').options.signal;
+  await f.post('/api/tasks/ai', { action: 'cancel', ...task });
+  assert.equal(signal.aborted, false);
+  finishTask('취소된 작업 응답'); await f.wait();
+  finishChat({ action: 'pass' }); await ordinary;
+  await f.draft('다음 작업 분석');
+  await f.start();
+  const activeTask = f.room.app.taskAI.job;
+  await f.room.post('/api/cancel', {});
+  assert.equal(activeTask.controller.signal.aborted, false);
+  finishTask('작업 완료'); await f.wait();
+});
+
 test('Claude provider refuses missing capabilities/auth and enforces tool-free isolated execution and output contracts', async () => {
   const calls = [];
   let mode = 'success';

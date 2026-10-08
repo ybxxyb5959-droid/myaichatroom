@@ -123,6 +123,7 @@ test('house work has no interval or daily quota, retains sequential calls, and O
   assert.ok(s.app.store.messages.some((m) => m.kind === 'house-say'), 'shared chat is deliberately retained');
   assert.ok(s.app.house.s.log.some((m) => m.source === 'ai' && m.speechId));
   await s.post('/api/room', { auto: { on: false } });
+  await s.post('/api/house/active', { active: false });
   await s.app.houseRuntime.tick(); assert.equal(s.calls.length, 2);
 });
 

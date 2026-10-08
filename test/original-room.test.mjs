@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SPEEDS } from '../lib/original-room.mjs';
 import { roomFixture, IDS } from './helpers/room.mjs';
+import { run, running } from '../lib/agents.mjs';
 
 test('ordinary send never picks a representative or calls the retained discussion pipeline', async (t) => {
   const s = await roomFixture(t, { reply: ({ id }) => ({ action: id === 'gpt' ? 'pass' : 'say', messages: [`${id}의 말`] }) });
@@ -145,4 +146,52 @@ test('global stop aborts all three replies and drops late speech, notes and buil
   assert.ok(IDS.every((id) => s.app.store.readNote(id) === ''));
   assert.equal(s.app.world.blocks.size, 0);
   assert.equal(s.app.view().room.auto.on, false);
+});
+
+test('AI mention and reply_to wake the addressed peer while pass remains an independent choice', async t => {
+  const s = await roomFixture(t, { reply: ({ id }) => id === 'claude' ? { action: 'say', messages: ['@GPT 이 의견은 어때?'] }
+    : { action: 'pass' } });
+  await s.start(); const user = await s.send('시작'); await s.advance(); await s.advance(2000);
+  const source = s.app.store.messages.findLast(m => m.from === 'claude');
+  assert.ok(source); assert.equal(s.app.runtime.isCalled(source, 'gpt'), true);
+  assert.equal(s.app.runtime.isCalled(source, 'gemini'), false);
+  await s.advance(); assert.equal(s.app.runtime.agents.gpt.reason, 'urgent');
+  s.reply(({ id }) => id === 'gpt' ? { action: 'say', messages: ['후속 답변'], reply_to: source.id } : { action: 'pass' });
+  await s.advance(8000);
+  const followup = s.app.store.messages.findLast(m => m.from === 'gpt');
+  assert.equal(followup.replyTo, source.id);
+  assert.equal(s.app.runtime.isCalled(followup, 'claude'), true);
+  assert.ok(s.calls.at(-1).prompt.includes(String(user.id)));
+});
+
+test('malformed say/pass retries once, reports an error and never becomes a successful pass', async t => {
+  const s = await roomFixture(t, { ids: ['gpt'], reply: () => ({ ok: true, text: 'broken JSON', ms: 1 }) });
+  await s.start(); await s.send('응답해 줘'); await s.advance(); await s.advance(2000);
+  assert.equal(s.calls.length, 2);
+  assert.equal(s.app.runtime.agents.gpt.fails, 1);
+  assert.equal(s.app.view().members.find(m => m.id === 'gpt').health.kind, 'response');
+  assert.ok(s.app.store.messages.some(m => m.kind === 'error' && m.errorKind === 'response'));
+  assert.ok(!s.app.store.messages.some(m => m.from === 'gpt'));
+  await s.advance(1000); assert.equal(s.calls.length, 2);
+});
+
+test('ordinary cancellation leaves another CLI process alive until its own signal is cancelled', async t => {
+  const s = await roomFixture(t), controller = new AbortController();
+  const baseline = running.size;
+  const task = run(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { signal: controller.signal, timeoutMs: 10000 });
+  t.after(async () => { controller.abort(); await task; });
+  await s.app.runtime.cancel();
+  assert.equal(running.size, baseline + 1);
+  assert.equal(controller.signal.aborted, false);
+  controller.abort(); assert.equal((await task).code, -3);
+});
+
+test('a malformed quota recovery probe does not announce a successful return', async t => {
+  const s = await roomFixture(t, { ids: ['gpt'], reply: () => ({ ok: true, text: 'invalid recovery response', ms: 1 }) });
+  s.app.runtime.restForQuota('gpt');
+  await s.start(); await s.app.runtime.tick();
+  assert.equal(s.calls.length, 2);
+  assert.equal(s.app.room.enabled.gpt, false);
+  assert.ok(s.app.room.quotaRest.gpt);
+  assert.ok(!s.app.store.messages.some(m => m.kind === 'presence' && m.text.includes('들어옴')));
 });

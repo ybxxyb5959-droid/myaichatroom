@@ -186,7 +186,7 @@ test('HTTPS proxy authenticates before room data, isolates guest permissions and
   assert.equal((await f.remote('/events')).status, 401);
   const landing = await f.remote('/join');
   assert.equal(landing.status, 200);
-  assert.match(landing.text, /이름이 무엇인가요/);
+    assert.match(landing.text, /id="joinName"[^>]*required/);
   const { cookie, invitation } = await f.join('민수');
   assert.equal((await f.remote('/api/share/redeem', { body: { token: invitation.token, name: '다른사람' } })).status, 401);
   for (const route of ['/api/share', '/api/notes', '/api/models', '/api/file?path=test.txt', '/ws/test.txt', '/api/world'])
@@ -649,6 +649,9 @@ test('beta shared house and ballots use server identity across owner devices and
       req.on('error', reject); t.after(() => req.destroy());
     });
   }
+  await f.start();
+  await f.owner('/api/house/active', { active: true });
+  f.app.houseRuntime.buildAt = Infinity; // This regression exercises shared ballots, without a construction call.
   await f.app.houseRuntime.tick();
   const pendingId = f.app.house.s.story.current.id;
   f.app.houseRuntime.ballot('claude', { id: pendingId, choice: 0 }, true, '정원을 선택할게');

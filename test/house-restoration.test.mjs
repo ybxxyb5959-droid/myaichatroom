@@ -45,6 +45,7 @@ test('house, characters and diary return without deleting the world, messages or
 test('life events progress from conflict to mediation and reconciliation and stay in the house diary', async (t) => {
   const s = await roomFixture(t, { seed: home });
   await s.start();
+  await s.post('/api/house/active', { active: true });
   s.app.house.s.open = { eventId: 2, type: 'minor', pair: ['claude', 'gpt'], stage: 'conflict', itemId: 1, text: '소파 배치 갈등',
     ask: { deadline: s.clock.now + 60000, answer: null } };
   const result = await s.post('/api/house/decide', { choice: 'owner', note: '방향을 바꿔 보자', eventId: 2 });
@@ -81,6 +82,7 @@ test('house construction uses its own prompt and counted calls; OFF and regular 
   assert.ok(s.app.store.messages.some(m => m.kind === 'house-say' && m.text === '서재부터 지어 볼게'));
   assert.equal(buildBrief('gpt', s.cfg), brief);
   await s.post('/api/room', { auto: { on: false } });
+  await s.post('/api/house/active', { active: false });
   const saved = fs.readFileSync(s.app.house.file);
   await s.advance(2 * 3600000);
   assert.equal(s.calls.length, 1);
@@ -111,7 +113,7 @@ test('building and decorating continue beyond former daily caps with the current
   }
 });
 
-test('stopping the room waits for a house call and refuses its late layout changes', async (t) => {
+test('stopping ordinary chat leaves house work intact; house OFF cancels its own call and refuses late changes', async (t) => {
   let finished = false;
   const s = await roomFixture(t, { ids: ['gpt'], discussionReply: (call) => new Promise(resolve => {
     call.options.signal.addEventListener('abort', () => {
@@ -123,7 +125,58 @@ test('stopping the room waits for a house call and refuses its late layout chang
   const pending = s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 1);
   await s.post('/api/room', { auto: { on: false } });
+  assert.equal(finished, false);
+  assert.equal(s.app.houseRuntime.running(), true);
+  await s.post('/api/house/active', { active: false });
   await pending;
   assert.equal(finished, true);
   assert.equal(Object.keys(s.app.house.s.floors).length, 0);
+});
+
+test('house activation is explicit and persisted, and house-only history never enters ordinary prompts', async t => {
+  const s = await roomFixture(t, { discussionReply: () => ({ ok: true, text: '{"actions":[]}' }) });
+  await s.start(); await s.app.houseRuntime.tick();
+  assert.equal(s.calls.length, 0); assert.equal(s.app.houseRuntime.view().active, false);
+  s.app.store.addMessage({ from: 'claude', kind: 'house-say', text: 'HOUSE-PRIVATE' });
+  s.app.store.addMessage({ from: 'system', kind: 'house-build', text: 'HOUSE-BUILD' });
+  s.app.store.addMessage({ from: 'claude', mode: 'discussion', phase: 'review', text: 'DEBATE-PRIVATE' });
+  s.app.store.writeNote('gpt', 'KEEP-MEMORY');
+  s.app.house.s.log.push({ kind: 'say', id: 'user', speechId: 'chat-100', text: 'OLD-NORMAL-MIRROR' });
+  assert.ok(!s.app.house.prompt('gpt').includes('OLD-NORMAL-MIRROR'));
+  assert.ok(s.app.house.s.log.some(m => m.text === 'OLD-NORMAL-MIRROR'));
+  await s.send('NORMAL-QUESTION'); await s.app.runtime.tick(); s.clock.now += 2000; await s.app.runtime.tick();
+  for (const c of s.calls) {
+    assert.ok(!c.prompt.includes('HOUSE-PRIVATE')); assert.ok(!c.prompt.includes('HOUSE-BUILD'));
+    assert.ok(!c.prompt.includes('DEBATE-PRIVATE'));
+  }
+  assert.ok(s.calls.find(c => c.id === 'gpt').prompt.includes('KEEP-MEMORY'));
+  assert.ok(!s.app.house.s.log.some(m => m.text.includes('NORMAL-QUESTION')));
+  await s.post('/api/house/active', { active: true }); await s.reopen();
+  assert.equal(s.app.houseRuntime.view().active, true);
+  assert.ok(s.app.store.messages.some(m => m.text === 'HOUSE-PRIVATE'));
+  await s.post('/api/house/active', { active: false });
+  const before = s.calls.length; await s.app.houseRuntime.tick(); assert.equal(s.calls.length, before);
+});
+
+test('house work owns its controller and slot while the same AI answers ordinary chat with maxInFlight one', async t => {
+  let release;
+  const s = await roomFixture(t, { ids: ['gpt'], cfg: { maxInFlight: 1 },
+    reply: () => ({ action: 'say', messages: ['일반 채팅 응답'] }),
+    discussionReply: ({ options }) => new Promise(resolve => {
+      release = resolve;
+      options.signal.addEventListener('abort', () => resolve({ ok: true, text: '{"actions":[]}' }), { once: true });
+    }) });
+  await s.start(); await s.post('/api/house/continue-solo', {});
+  const house = s.app.houseRuntime.tick(), signal = s.calls[0].options.signal;
+  assert.equal(s.app.runtime.agents.gpt.busy, false);
+  await s.send('집짓기 중 질문'); await s.app.runtime.tick(); s.clock.now += 2000; await s.app.runtime.tick();
+  assert.ok(s.app.store.messages.some(m => m.text === '일반 채팅 응답'));
+  assert.equal(s.calls.filter(c => c.options.usageKind === 'house').length, 1);
+  await s.post('/api/cancel', {}); assert.equal(signal.aborted, false);
+  assert.equal(s.app.houseRuntime.running(), true);
+  release({ ok: true, text: '{"say":"HOUSE-FOLLOWUP","actions":[]}' }); await house;
+  const again = s.app.houseRuntime.tick();
+  assert.equal(s.calls.filter(c => c.options.usageKind === 'house').length, 2);
+  await s.app.houseRuntime.cancel(); await again;
+  assert.equal(s.app.runtime.agents.gpt.controller.signal.aborted, true);
 });

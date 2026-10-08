@@ -122,7 +122,7 @@ test('the live runtime preserves legacy homes, drops stale-roster replies, and i
   assert.equal(s.app.house.s.floors['20,20'], 'wood');
   assert.equal(s.app.house.s.planning.previousPlan, '예전에는 Claude가 담당');
   assert.equal(s.app.houseRuntime.view().progress.stage, 'planning');
-  await s.start(); s.app.houseRuntime.nextActor = 'gpt';
+  await s.start(); await s.post('/api/house/active', { active: true }); s.app.houseRuntime.nextActor = 'gpt';
   const running = s.app.houseRuntime.tick();
   s.app.runtime.setEnabled('claude', false);
   release({ ok: true, text: JSON.stringify({ say: 'Claude가 다음에 해줘', design: design() }) });

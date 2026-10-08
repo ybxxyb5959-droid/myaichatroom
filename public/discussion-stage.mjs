@@ -12,7 +12,9 @@ export function discussionScene(room, previous = null) {
     visible: !!room.discussion || !!active,
     speaker,
     running: busy.length > 0,
-    title: active ? '토론 중' : '토론 대기 · 질문을 보내 주세요',
+    title: active?.phase === 'selection' ? '최종 답변 AI 선정 중' : active?.synthesizer
+      ? `최종 답변 담당: ${active.synthesizer === 'gpt' ? 'GPT' : active.synthesizer === 'claude' ? 'Claude' : 'Gemini'}`
+      : active ? '토론 중' : '토론 대기 · 질문을 보내 주세요',
     characters: IDS.map((id) => {
       const current = active?.states[id];
       return {

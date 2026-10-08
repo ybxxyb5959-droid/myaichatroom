@@ -18,10 +18,11 @@ panel.innerHTML = `
     <button type="button" data-panel="hsProgress" aria-expanded="false">진행 상세</button>
     <button type="button" data-panel="hsDiary" aria-expanded="false">집 기록</button>
     <button type="button" id="hsPlayer" hidden>내 캐릭터</button>
+    <button type="button" id="hsActive" aria-pressed="false">집 자동 실행 켜기</button>
     <button type="button" id="hsContinueSolo" hidden>혼자 계속하기</button>
     <span class="hs-follow" id="hsFollow" role="group" aria-label="캐릭터 따라가기">${Object.keys(COLORS).map((id) => `<button type="button" data-follow="${id}" aria-pressed="false" title="이 캐릭터를 따라가요"><img src="/avatars/${id}-pixel-128.png" alt=""><span></span></button>`).join('')}</span>
   </nav>
-  <p class="hs-empty" id="hsEmpty" hidden>아직 아무것도 없어요.<br>Talk가 켜져 있으면 AI들이 천천히 집을 짓기 시작해요.</p>
+  <p class="hs-empty" id="hsEmpty" hidden>아직 아무것도 없어요.<br>집 자동 실행을 켜면 AI들이 집을 짓기 시작해요.</p>
   <p class="hs-error" id="hsError" role="alert" hidden></p>
   <aside class="hs-plan" id="hsPlan" hidden><b>공동 계획</b><p id="hsPlanText"></p></aside>
   <aside class="hs-progress" id="hsProgress" aria-label="공사 진행" hidden></aside>
@@ -86,6 +87,7 @@ $('#hsPlayer').onclick = () => { scene.follow = 'user'; scene.zoom = .65; showFo
 canvas.addEventListener('house-render-error', (e) => { error(e.detail); $('#hsPhoto').disabled = true; });
 canvas.addEventListener('house-follow-change', showFollow);
 $('#hsContinueSolo').onclick = () => send('/api/house/continue-solo', {}).catch(e => error(e.message));
+$('#hsActive').onclick = () => send('/api/house/active', { active: !data.active }).catch(e => error(e.message));
 async function initialize() {
   if (scene) return;
   initializing ||= import('./house-scene.mjs').then(({ HouseScene }) => {
@@ -170,6 +172,9 @@ function renderJoint(vote, target, story = false) {
 function renderSide() {
   const guest = data.role === 'guest';
   $('#hsMode').hidden = guest;
+  $('#hsActive').hidden = guest;
+  $('#hsActive').textContent = data.active ? '집 자동 실행 끄기' : '집 자동 실행 켜기';
+  $('#hsActive').setAttribute('aria-pressed', String(!!data.active));
   $('#hsAsk').hidden = guest || $('#hsAsk').hidden;
   $('#hsUndo').hidden = guest || $('#hsUndo').hidden;
   renderDiary();
@@ -178,7 +183,7 @@ function renderSide() {
   renderActivity();
   $('#hsPlayer').hidden = $('#hsPlayerHelp').hidden = !data.player;
   const talk = data.crew?.waiting ? '건축 AI 호출은 쉬고 있어요. 일반 채팅은 계속할 수 있습니다.'
-    : data.talk ? (data.busy ? 'AI가 계획을 검토하고 있어요' : data.nextAt > Date.now() ? '호출 오류로 재시도 대기 중' : 'Talk 켜짐 · 작업을 이어가요') : 'Talk 꺼짐 · 켜면 다시 움직여요';
+    : data.talk ? (data.busy ? 'AI가 계획을 검토하고 있어요' : data.nextAt > Date.now() ? '호출 오류로 재시도 대기 중' : '집 자동 실행 켜짐 · 작업을 이어가요') : '집 자동 실행 꺼짐 · 켜면 다시 움직여요';
   $('#hsStatus').textContent = `${data.crew?.waiting ? '동료 복귀 대기' : data.progress?.stage === 'planning' ? 'AI 공동 계획 논의 중' : data.progress ? `전체 공사 ${data.progress.percent}%` : data.phase === 'life' ? '기본 집 완성' : '집 짓는 중'}${data.talk ? '' : ' · 일시정지'}`;
   $('#hsContinueSolo').hidden = guest || !data.crew?.waiting || Object.keys(data.agents).length !== 1;
   $('#hsStatus').title = talk;

@@ -272,7 +272,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     participants: participants(),
     room: { ...room, chatFrequency: native.chatFrequency, name: room.roomName, memos: Object.fromEntries(IDS.map((id) => [id, store.readNote(id)])), checking: [...checking.keys()], modelCache: undefined,
       auto: { ...room.auto, on: native.running, usage: { ...room.auto.usage, calls: native.calls } },
-      active: active ? { id: active.id, mode: 'discussion', startedBy: active.startedBy, states: active.states, calls: active.calls, synthesizer: active.synthesizer, models: active.models } : null,
+      active: active ? { id: active.id, mode: 'discussion', startedBy: active.startedBy, states: active.states, calls: active.calls, synthesizer: active.synthesizer, selectionReason: active.selectionReason, phase: active.phase, models: active.models } : null,
       autoRunning: !!runtime && Object.values(runtime.agents).some((a) => a.busy || a.imageBusy), autoSleeping: native.sleeping,
       autoReady: IDS.some((id) => available[id] && room.enabled[id]), autoRest: false, autoNextAt: null,
       autoUses: room.models, recommended: Object.fromEntries(IDS.map((id) => [id, recommendedSettings(id)])),
@@ -290,8 +290,19 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     agents: Object.fromEntries(IDS.map((id) => [id, { ...cfg.agents[id], ...room.models[id] }])) });
   const checkedCalls = {};
   // Guest requests run through their separately metered path and must not start autonomous reply chains.
+  const ordinaryMessage = m => !m.guestId && !m.kind?.startsWith('house-') && m.mode !== 'house' && m.mode !== 'discussion' && !['opinion', 'review', 'final'].includes(m.phase);
+  const ordinaryIndex = { get: id => {
+    const message = store.byId.get(id);
+    return message && ordinaryMessage(message) ? message : undefined;
+  }, has: id => !!ordinaryIndex.get(id) };
   const ordinaryStore = new Proxy(store, { get(target, key, receiver) {
-    return key === 'messages' ? target.messages.filter((m) => !m.guestId) : Reflect.get(target, key, receiver);
+    if (key === 'messages') return target.messages.filter(ordinaryMessage);
+    if (key === 'byId') return ordinaryIndex;
+    if (key === 'after') return id => target.after(id).filter(ordinaryMessage);
+    if (key === 'recent') return n => target.messages.filter(ordinaryMessage).slice(-n);
+    if (key === 'lastMessage') return () => target.messages.findLast(ordinaryMessage);
+    const value = Reflect.get(target, key, receiver);
+    return typeof value === 'function' ? value.bind(receiver) : value;
   } });
   runtime = new OriginalRoom({ ids: ['claude', 'gpt', 'gemini'], store: ordinaryStore, world, adapter, config, room: native, post, broadcast,
     changed: () => {
@@ -349,7 +360,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   function beginDiscussion(message, selection, images, guestIdentity = null, guestWebSearch = false) {
     const models = structuredClone(room.debateModels), controller = new AbortController();
     const job = { id: crypto.randomUUID(), controller, guestId: guestIdentity?.guestId, startedBy: message.displayName || room.userName, states: {}, calls: 0, models,
-      synthesizer: selection.participants.includes(room.synthesizer) ? room.synthesizer : selection.participants[0] };
+      synthesizer: null, selectionReason: '', phase: 'opinion' };
     active = job; runtime.suspended = true; publish();
     job.done = (async () => {
       await runtime.cancel();
@@ -363,10 +374,12 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         return adapter.chat(...args);
       } } : adapter;
       const result = await discuss({ adapter: discussionAdapter, request,
-        history: runtime.presenceText() + '\n' + store.recent(40).filter((m) => (!guestIdentity || m.id > sharing.data.guests[guestIdentity.guestId].since) && (m.from !== 'system' || m.kind === 'presence')).map((m) => `[${m.id}] ${m.from}: ${m.text}`).join('\n'),
+        history: runtime.presenceText() + '\n' + store.messages.filter((m) => !m.kind?.startsWith('house-') && m.mode !== 'house' && (!guestIdentity || m.id > sharing.data.guests[guestIdentity.guestId].since) && (m.from !== 'system' || m.kind === 'presence')).slice(-40).map((m) => `[${m.id}] ${m.from}: ${m.text}`).join('\n'),
         signal: controller.signal, canCall: (id) => !!available[id] && room.enabled[id] && (!guestIdentity || sharing.valid(guestIdentity) && sharing.usage(guestIdentity.guestId).remaining > 0),
-        onState: ({ phase, id, status, kind, calls }) => {
-          job.calls = calls; job.states[id] = { phase, status, kind };
+        onState: ({ phase, id, status, kind, calls, synthesizer, selectionReason }) => {
+          job.calls = calls; job.phase = phase;
+          if (synthesizer) { job.synthesizer = synthesizer; job.selectionReason = selectionReason; }
+          if (id) job.states[id] = { phase, status, kind };
           if (status === '실패') room.checks[id].models[models[id].model] = { status: 'fail', kind, at: clock() };
           publish();
         },
@@ -613,7 +626,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     // One bounded, metered turn for a batch of human messages. AI responses are
     // never enqueued and remain excluded from the ordinary unmetered engine.
     job.done = (async () => {
-      const visible = guestView(identity).messages.filter(m => m.from !== 'system' && m.id <= message.id);
+      const visible = guestView(identity).messages.filter(m => m.from !== 'system' && !m.kind?.startsWith('house-') && m.mode !== 'house' && m.mode !== 'discussion' && m.id <= message.id);
       const context = [...new Map([...visible.filter(m => m.guestId === guestId).slice(-8), ...visible.slice(-12)]
         .map(m => [m.id, m])).values()].sort((a, b) => a.id - b.id);
       const history = context.map(m => `${m.name}: ${m.text}`).join('\n').slice(-12000);
@@ -1190,7 +1203,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     clearInterval(normalTimer); if (usageTimer) clearInterval(usageTimer);
     active?.controller.abort();
     for (const controller of checking.values()) controller.abort();
-    await runtime.close(); if (active) await active.done;
+    await Promise.all([runtime.close(), houseRuntime.cancel()]); if (active) await active.done;
     for (const client of clients) client.end(); clients.clear();
     if (usage) usage.onUpdate = () => {};
     if (externalServer) {

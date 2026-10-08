@@ -54,3 +54,12 @@ test('cancellation, completion and ordinary chat do not leave a thinking bubble'
   assert.equal(scene.visible, true);
   assert.equal(scene.characters[0].phase, 'opinion');
 });
+
+test('selection and selected writer are visible without inventing an AI generation turn', () => {
+  const value = room({ gpt: { status: '완료', phase: 'review' } });
+  value.active.phase = 'selection';
+  assert.equal(discussionScene(value).title, '최종 답변 AI 선정 중');
+  assert.equal(discussionScene(value).speaker, null);
+  value.active.phase = 'final'; value.active.synthesizer = 'gpt';
+  assert.equal(discussionScene(value).title, '최종 답변 담당: GPT');
+});

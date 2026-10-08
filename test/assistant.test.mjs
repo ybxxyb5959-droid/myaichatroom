@@ -5,10 +5,13 @@ import path from 'node:path';
 import http from 'node:http';
 import { renderMarkdown, splitFold, extractLinks } from '../public/format.mjs';
 import { roomFixture, IDS } from './helpers/room.mjs';
+import { reviewEvaluation, rankSynthesizers, errorKind } from '../lib/discussion.mjs';
 
 test('discussion still runs three independent opinions, three reviews and one synthesis', async (t) => {
-  const s = await roomFixture(t);
-  await s.post('/api/room', { discussion: true, synthesizer: 'gpt' });
+  const s = await roomFixture(t, { discussionReply: ({ id, prompt }) => ({ ok: true, text: prompt.includes('<evaluation>')
+    ? '검토 의견\n<evaluation>' + JSON.stringify({ ratings: IDS.filter(x => x !== id).map(x => ({ id: x, scores: Array(5).fill(x === 'gpt' ? 5 : 2), reason: '근거와 균형 있는 종합' })), recommend: id === 'gpt' ? 'claude' : 'gpt' }) + '</evaluation>'
+    : '토론 의견과 근거' }) });
+  await s.post('/api/room', { discussion: true, synthesizer: 'claude' });
   await s.send('세 가지 접근을 비교해 줘');
   await s.app.active?.done;
   assert.equal(s.calls.length, 7);
@@ -122,4 +125,64 @@ test('rendering escapes executable markup while keeping folded discussion text a
   const links = extractLinks('https://example.com javascript:alert(1)');
   assert.ok(JSON.stringify(links).includes('https://example.com'));
   assert.ok(!JSON.stringify(links).includes('javascript:'));
+});
+
+const evaluatedReview = (id, best = 'gpt') => '반론을 검토하고 근거를 보완했습니다.\n<evaluation>' + JSON.stringify({
+  ratings: IDS.filter(x => x !== id).map(x => ({ id: x, scores: Array(5).fill(x === best ? 5 : x === 'claude' ? 3 : 1), reason: '주제 이해와 근거, 균형 있는 종합을 검토함' })),
+  recommend: id === best ? 'claude' : best,
+}) + '</evaluation>';
+
+test('peer evaluation excludes self promotion and rejects incomplete, duplicate or out-of-range ballots', () => {
+  const parsed = reviewEvaluation(evaluatedReview('claude'), 'claude', IDS);
+  assert.equal(parsed.evaluation.recommend, 'gpt');
+  assert.ok(!parsed.text.includes('<evaluation>'));
+  assert.equal(reviewEvaluation(evaluatedReview('claude').replace('<evaluation>', '[evaluation]'), 'claude', IDS).evaluation.recommend, 'gpt');
+  for (const ratings of [[], [{ id: 'gpt', scores: [5, 5, 5, 5, 6], reason: 'bad' }],
+    [{ id: 'gpt', scores: Array(5).fill(5), reason: 'one' }, { id: 'gpt', scores: Array(5).fill(5), reason: 'duplicate' }]]) {
+    assert.equal(reviewEvaluation(`<evaluation>${JSON.stringify({ ratings })}</evaluation>`, 'claude', IDS).evaluation, null);
+  }
+  const self = evaluatedReview('gpt').replace('"recommend":"claude"', '"recommend":"gpt"');
+  assert.equal(reviewEvaluation(self, 'gpt', IDS).evaluation.recommend, null);
+  const reviews = IDS.map(id => ({ id, text: id, evaluation: reviewEvaluation(evaluatedReview(id), id, IDS).evaluation }));
+  assert.equal(rankSynthesizers(reviews, reviews, '주제')[0].id, 'gpt');
+  const missing = IDS.map(id => ({ id, text: `검토 ${id}` }));
+  assert.deepEqual(rankSynthesizers(missing, missing, '주제').map(x => x.id), rankSynthesizers([...missing].reverse(), [], '주제').map(x => x.id));
+});
+
+test('automatic synthesis uses peer scores, hides evaluation JSON, preserves models and replaces a quota-failed winner once', async t => {
+  const s = await roomFixture(t, { discussionReply: ({ id, prompt }) => {
+    if (prompt.includes('<evaluation>')) return { ok: true, text: evaluatedReview(id) };
+    if (prompt.includes('교차 검토:') && id === 'gpt') return { ok: false, detail: '429 usage limit reached' };
+    return { ok: true, text: `${id}: 핵심 주장과 근거` };
+  } });
+  await s.post('/api/room', { discussion: true, synthesizer: 'gemini', debateModels: { claude: { model: 'test-claude' } } });
+  await s.send('검토 후 종합해 줘'); await s.app.active?.done;
+  assert.equal(s.calls.length, 8);
+  const selections = s.app.store.messages.filter(m => m.kind === 'selection');
+  assert.deepEqual(selections.map(m => m.synthesizer), ['gpt', 'claude']);
+  const final = s.app.store.messages.find(m => m.phase === 'final' && m.from !== 'system');
+  assert.equal(final.from, 'claude'); assert.equal(final.model, 'test-claude');
+  assert.ok(s.app.store.messages.filter(m => m.phase === 'review').every(m => !m.text.includes('<evaluation>')));
+  const prompt = s.calls.at(-1).prompt;
+  for (const id of IDS) assert.ok(prompt.includes(`${id}:`));
+  assert.match(prompt, /gpt\(실패\)/);
+  assert.match(prompt, /이견.*미확인/);
+  const summary = s.app.store.messages.findLast(m => m.kind === 'complete').summary;
+  assert.equal(summary.synthesizer, 'claude'); assert.equal(summary.ok, true);
+  assert.ok(summary.failed.some(f => f.id === 'gpt' && f.kind === 'quota'));
+});
+
+test('missing or malformed evaluations complete without voting calls and unavailable candidates cannot be selected', async t => {
+  const s = await roomFixture(t, { discussionReply: ({ id, prompt }) => prompt.includes('<evaluation>')
+    ? { ok: true, text: `${id} 검토\n<evaluation>{broken}</evaluation>` } : { ok: true, text: `${id} 근거` } });
+  await s.post('/api/room', { discussion: true });
+  await s.send('평가 형식 실패'); await s.app.active?.done;
+  assert.equal(s.calls.length, 7);
+  assert.match(s.app.store.messages.findLast(m => m.kind === 'complete').summary.selectionReason, /유효한 상호 평가가 없어/);
+  assert.equal(rankSynthesizers([{ id: 'claude', text: '정상' }], [], 'topic')[0].id, 'claude');
+});
+
+test('provider failure badges distinguish quota, auth, timeout, model, capacity and invalid responses', () => {
+  for (const [detail, kind] of [['RESOURCE_EXHAUSTED', 'quota'], ["You've hit your limit", 'quota'], ['401 login required', 'auth'],
+    ['timed out', 'timeout'], ['model not found', 'model'], ['503 overloaded', 'capacity'], ['Invalid JSON action', 'response']]) assert.equal(errorKind(detail), kind);
 });

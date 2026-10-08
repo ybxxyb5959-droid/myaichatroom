@@ -284,6 +284,14 @@ test('Gemini malformed JSON, wrong response types and error statuses are failure
     const quota = await adapter.chat('gemini', 'brief', 'test', { independent: true });
     assert.equal(quota.ok, false);
     assert.match(quota.detail, /429 usage limit reached/);
+    output = 'CLI banner\n```json\n' + JSON.stringify({ status: 'SUCCESS', response: '{"action":"say","messages":["복구 {내용}"]}' }) + '\n```';
+    assert.match((await adapter.chat('gemini', 'brief', 'test')).text, /복구/);
+    output = '{"action":"pass"}';
+    assert.equal((await adapter.chat('gemini', 'brief', 'test')).text, output);
+    for (const value of ['{"status":"SUCCESS","denied_actions":[{"action":"tool"}]}',
+      '{"response":42,"tool":{"action":"pass"}}', 'banner {"incomplete":{"response":"nested"}']) {
+      output = value; assert.equal((await adapter.chat('gemini', 'brief', 'test')).ok, false, value);
+    }
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
   assert.equal(running.size, 0);
 });

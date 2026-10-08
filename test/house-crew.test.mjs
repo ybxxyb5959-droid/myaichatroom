@@ -32,6 +32,7 @@ test('one member finishes at most two turns, saves a handoff across restart and 
   } });
   s.app.runtime.setEnabled('claude', false);
   await s.start();
+  await s.post('/api/house/active', { active: true });
   await s.app.houseRuntime.tick(); await s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 2);
   assert.equal(Object.keys(s.app.house.s.walls).length, 4);
@@ -61,7 +62,7 @@ test('solo finishing refuses new rooms, demolition and multiple work units, but 
       { type: 'erase', x: 2, z: 2 },
     ],
   }) }) });
-  await s.start(); await s.app.houseRuntime.tick(); await s.app.houseRuntime.tick();
+  await s.start(); await s.post('/api/house/active', { active: true }); await s.app.houseRuntime.tick(); await s.app.houseRuntime.tick();
   assert.equal(s.app.house.s.floors['20,20'], undefined);
   assert.equal(s.app.house.s.floors['2,2'], 'wood');
   assert.equal(s.app.house.s.crew.waiting, true);
@@ -74,7 +75,7 @@ test('solo finishing refuses new rooms, demolition and multiple work units, but 
 
 test('a sole member without an approved task waits without wasting AI calls; ordinary chat remains separate', async (t) => {
   const s = await roomFixture(t, { ids: ['gpt'] });
-  await s.start(); await s.app.houseRuntime.tick();
+  await s.start(); await s.post('/api/house/active', { active: true }); await s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 0);
   assert.equal(s.app.house.s.crew.waiting, true);
   assert.equal(s.app.runtime.room.running, true);
@@ -85,7 +86,7 @@ test('a sole member without an approved task waits without wasting AI calls; ord
 
 test('failed solo turns also stop after two calls without an extra summarization call', async (t) => {
   const s = await roomFixture(t, { ids: ['gpt'], seed, discussionReply: () => ({ ok: false, detail: 'offline' }) });
-  await s.start(); await s.app.houseRuntime.tick();
+  await s.start(); await s.post('/api/house/active', { active: true }); await s.app.houseRuntime.tick();
   s.clock.now += 20000; await s.app.houseRuntime.tick();
   s.clock.now += 300000; await s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 2); assert.equal(s.app.house.s.crew.waiting, true);
