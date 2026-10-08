@@ -10,9 +10,11 @@
 <link rel="stylesheet" href="/share.css">
 <link rel="stylesheet" href="/house.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png?v=20261008">
 <meta name="theme-color" content="#141820">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='6' y='10' width='52' height='38' rx='12' fill='%23d97a3a'/%3E%3Cpath d='M20 48l-4 10 14-10z' fill='%23d97a3a'/%3E%3Ccircle cx='22' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='32' cy='29' r='4' fill='%23fff'/%3E%3Ccircle cx='42' cy='29' r='4' fill='%23fff'/%3E%3C/svg%3E">
+<meta name="application-name" content="AI 단톡방">
+<meta name="apple-mobile-web-app-title" content="AI 단톡방">
+<link rel="icon" type="image/png" href="/icon-192.png?v=20261008">
 </head>
 <body>
 <div class="app ws-closed" id="app">
@@ -38,11 +40,17 @@
         <div class="me-av" id="meAv" data-i18n="me.initial">방</div>
         <div class="m-info"><div class="m-name"><span id="meName" data-i18n="user.default">방장</span><button class="pen" id="meEdit" type="button" aria-label="내 이름 편집" title="내 이름 편집 (AI들이 이 이름으로 불러요)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-4-4L4 16z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></button> <span class="m-tag" data-i18n="me.tag">나</span></div><div class="m-status" data-i18n="me.role">방장</div></div>
       </div>
+      <ul class="members human-members" id="humanMembers" aria-label="친구 참여자"></ul>
     </div>
 
     <div class="side-sec settings">
       <div class="sec-label">대화 설정</div>
       <div id="autoField">
+        <div class="field" id="chatFrequencyField">
+          <span class="field-label">💬 채팅 빈도</span>
+          <div class="seg" id="chatFrequencySeg" role="group" aria-label="채팅 빈도"><button type="button" data-frequency="quiet">조용한</button><button type="button" data-frequency="normal">보통</button><button type="button" data-frequency="lively">활발하게</button></div>
+        </div>
+        <p class="hint" id="chatFrequencyHint">자율 대화 빈도만 조절해요. 직접 질문과 멘션은 그대로 답해요.</p>
         <div class="field">
           <span class="field-label">⚡ 진심모드</span>
           <div class="seg" id="boostSeg" role="group" aria-label="진심모드"><button type="button" data-boost="auto">자동</button><button type="button" data-boost="manual">부를 때만</button><button type="button" data-boost="off">끔</button></div>
@@ -70,10 +78,10 @@
         <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
       <div class="head-title">
-        <div class="t"><span id="headTitle">AI 단톡방</span> <span class="head-count" id="headCount" title="참여 중인 사람 수 (나 포함)"></span></div>
+        <div class="t"><span id="headTitle">AI 단톡방</span> <span class="head-count" id="headCount" title="참여 중인 사람 수 (나 포함)"></span><button class="icon-btn guest-leave" id="guestLeave" type="button" aria-label="채팅방 나가기" title="채팅방 나가기" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v16h6m4-12 4 4-4 4m-6-4h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
         <button class="chatter-btn" id="chatterBtn" type="button" aria-pressed="true" title="AI들끼리 떠드는 Talk 켜기/끄기"><i aria-hidden="true"></i><span id="chatterText">Talk on</span></button>
       </div>
-      <div class="head-actions">
+      <div class="head-actions" data-pwa-install>
         <button class="icon-btn" id="shareBtn" type="button" aria-label="휴대폰 연결 및 친구 초대" title="휴대폰 연결 · 친구 초대">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="19" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 10 6-4M9 14l6 4" stroke="currentColor" stroke-width="1.7"/></svg>
         </button>
@@ -88,6 +96,14 @@
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           <span class="badge" id="wsBadge" hidden></span>
         </button>
+        <details class="head-more" id="ownerMore">
+          <summary class="icon-btn" aria-label="더 보기" title="더 보기">⋯</summary>
+          <div class="head-more-menu">
+            <button type="button" class="owner-mobile-action" data-head-action="taskBtn">🔨 작업대</button>
+            <button type="button" class="owner-mobile-action" data-head-action="themeBtn">☾ 테마</button>
+            <div data-owner-install></div>
+          </div>
+        </details>
       </div>
     </header>
 
@@ -483,10 +499,7 @@
   <div class="tour-card" id="tourCard" role="dialog" aria-live="polite"></div>
 </div>
 
-<script type="module" src="/assistant.js"></script>
-<script type="module" src="/task-screen.js"></script>
-<script type="module" src="/house.js"></script>
-<script type="module" src="/share.js"></script>
+<script type="module" src="/room-ui.mjs"></script>
 <script type="module" src="/pwa.js"></script>
 </body>
 </html>

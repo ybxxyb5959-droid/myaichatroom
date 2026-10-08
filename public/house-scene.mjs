@@ -83,11 +83,21 @@ export class HouseScene {
 
   update(data) {
     this.data = data;
-    const key = JSON.stringify([data.floors, data.walls, data.defs, data.items]);
+    const key = JSON.stringify([data.floors, data.walls, data.defs, data.items, data.story?.environment]);
     if (key !== this.structureKey) {
       this.structureKey = key; dispose(this.structure);
       this.bounds = houseBounds(data);
       this.mesh('box', -1, -.18, -1, data.size + 2, .12, data.size + 2, '#c5d4ab');
+      const env = data.story?.environment;
+      if (env?.yard === 'garden') {
+        for (let z = 2; z < 6; z++) {
+          this.mesh('cyl', -.85, 0, z, .5, .3, .5, '#b98550');
+          this.mesh('ball', -.85, .3, z, .5, .5, .5, z % 2 ? '#ee93b4' : '#5fa660');
+        }
+      } else if (env?.yard === 'bbq') {
+        this.mesh('box', -.85, 0, 3, .6, .8, 1.4, '#4f545e');
+        this.mesh('box', -.85, .8, 3, .6, .1, 1.4, '#e8914a');
+      }
       // Every floor cell, wall cell and furniture piece is one "cell": [key, color, parts to draw].
       const cells = [
         ...data.floors.map(([x, z, c]) => [`f${x},${z},${c}`, data.palette[c], [['box', x, -.06, z, 1, .06, 1, data.palette[c]]]]),

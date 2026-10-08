@@ -8,8 +8,11 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
 <link rel="stylesheet" href="/share.css">
+<link rel="stylesheet" href="/house.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png?v=20261008">
+<link rel="icon" type="image/png" href="/icon-192.png?v=20261008">
+<meta name="application-name" content="AI 단톡방"><meta name="apple-mobile-web-app-title" content="AI 단톡방">
 </head>
 <body class="guest-page">
 <div class="app ws-closed" id="app">
@@ -21,6 +24,7 @@
     <div class="side-sec">
       <div class="sec-label">함께 대화하는 AI</div>
       <ul class="members" id="guestMembers"></ul>
+      <p class="hint" id="guestPeople" aria-live="polite"></p>
       <div class="me-row"><div class="me-av" id="guestInitial"></div><div class="m-info">
         <div class="m-name"><span id="guestName"></span><span class="m-tag">나</span></div>
         <div class="m-status">친구</div>
@@ -43,6 +47,7 @@
       </button>
       <div class="head-title"><div class="t" id="roomTitle">AI 단톡방</div><div class="s" id="guestConnection" role="status">연결 중…</div></div>
       <div class="head-actions">
+        <button class="icon-btn" id="houseBtn" type="button" aria-label="공동 집 보기" aria-expanded="false">🏠</button>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
@@ -71,6 +76,7 @@
 </div>
 <button class="scrim" id="scrim" type="button" aria-label="멤버 목록 닫기" hidden></button>
 <script type="module" src="/guest.js"></script>
+<script type="module" src="/house.js"></script>
 <script type="module" src="/pwa.js"></script>
 </body>
 </html>

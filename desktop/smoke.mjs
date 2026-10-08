@@ -12,7 +12,7 @@ const packaged = process.argv[2];
 const executable = packaged ? path.resolve(packaged) : createRequire(import.meta.url)('electron');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatroom-desktop-smoke-'));
 const env = { ...process.env, CHATROOM_HOME: path.join(root, 'room'),
-  CHATROOM_CONFIG: path.join(root, 'config.json') };
+  CHATROOM_CONFIG: path.join(root, 'config.json'), CHATROOM_SMOKE_RECEIPT: path.join(root, 'receipt.json') };
 delete env.ELECTRON_RUN_AS_NODE;
 try {
   const result = await new Promise((resolve, reject) => {
@@ -27,12 +27,15 @@ try {
   });
   assert.equal(result.code, 0, JSON.stringify(result));
   const line = result.stdout.split(/\r?\n/).find((s) => s.startsWith('DESKTOP_SMOKE '));
-  assert.ok(line, `실행 확인 결과가 없습니다.\n${result.stdout}\n${result.stderr}`);
-  const receipt = JSON.parse(line.slice('DESKTOP_SMOKE '.length));
+  assert.ok(line || fs.existsSync(env.CHATROOM_SMOKE_RECEIPT), `실행 확인 결과가 없습니다.\n${result.stdout}\n${result.stderr}`);
+  const receipt = line ? JSON.parse(line.slice('DESKTOP_SMOKE '.length)) : JSON.parse(fs.readFileSync(env.CHATROOM_SMOKE_RECEIPT,'utf8'));
   assert.equal(receipt.ok, true);
   assert.equal(receipt.packaged, !!packaged);
   assert.equal(receipt.input, '채팅을 입력하세요.');
-  console.log(JSON.stringify(receipt));
+  const pairingLine = result.stdout.split(/\r?\n/).find(s => s.startsWith('PAIRING_INVITE_SMOKE '));
+  const sharing = pairingLine ? JSON.parse(pairingLine.slice('PAIRING_INVITE_SMOKE '.length)) : receipt.sharing;
+  assert.ok(sharing?.ownerPairing && sharing?.guestJoin && sharing?.adminBlocked, '폰 승인·친구 초대 검증 결과가 없습니다.');
+  console.log(JSON.stringify({ ...receipt, sharing }));
   if (result.stderr.trim()) console.error(result.stderr.trim());
 } finally {
   fs.rmSync(root, { recursive: true, force: true });

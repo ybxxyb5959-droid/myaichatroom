@@ -89,7 +89,13 @@ async function fixture(t, chat, { ids = ['claude'] } = {}) {
   };
   const join = async (name, role = 'guest') => {
     const invitation = await invite(role);
-    const response = await remote('/api/share/redeem', { body: { token: invitation.token, name, role: 'owner' } });
+    let response = await remote('/api/share/redeem', { body: { token: invitation.token, name, role: 'owner' } });
+    if (role === 'owner') {
+      assert.equal(response.status, 202);
+      const pending = await owner('/api/share/pairing');
+      await owner('/api/share/pairing', { id: pending.body.requests[0].id, approve: true });
+      response = await remote('/api/share/pair-status', { body: { token: invitation.token, challenge: response.body.challenge } });
+    }
     assert.equal(response.status, 200);
     assert.equal(response.body.role, role);
     return { invitation, cookie: response.headers['set-cookie'][0].split(';')[0] };
@@ -99,9 +105,9 @@ async function fixture(t, chat, { ids = ['claude'] } = {}) {
     while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.ok(predicate(), 'operation should complete');
   };
-  return { app, owner, remote, invite, join, calls, wait, tick: (ms = 1100) => { now += ms; },
+  return { app, local, owner, remote, invite, join, calls, wait, tick: (ms = 1100) => { now += ms; },
     start: () => owner('/api/room', { auto: { on: true, sleepMinutes: 0 } }),
-    pump: (ms = 2100) => { now += ms; return app.tickGuestReplies(); },
+    pump: (ms = 15001) => { now += ms; return app.tickGuestReplies(); },
     proxy: () => proxy, stopped: () => stopped };
 }
 
@@ -112,6 +118,15 @@ test('QR and PWA document navigation preserves authentication and cross-site API
   assert.equal(landing.status, 200);
   assert.match(landing.text, /joinForm/);
   assert.equal(landing.headers['set-cookie'], undefined);
+  const workerHeaders = { ...headers, 'Sec-Fetch-Mode': 'same-origin', 'Sec-Fetch-Dest': 'empty' };
+  assert.equal((await f.remote('/join', { origin: null, headers: workerHeaders })).status, 200);
+  assert.equal((await f.remote('/', { origin: null, headers: workerHeaders })).status, 303);
+  assert.equal((await f.remote('/api/state', { origin: null, headers: workerHeaders })).status, 403);
+  const mobileHeaders = { ...headers, 'Sec-Fetch-Dest': 'empty' };
+  assert.equal((await f.remote('/join', { origin: null, headers: mobileHeaders })).status, 200);
+  assert.equal((await f.remote('/', { origin: null, headers: mobileHeaders })).status, 303);
+  assert.equal((await f.remote('/api/state', { origin: null, headers: mobileHeaders })).status, 403);
+  assert.equal((await f.remote('/api/share/redeem', { body: {}, headers: mobileHeaders })).status, 403);
   assert.equal((await f.remote('/api/state', { origin: null })).status, 401);
   for (const route of ['/', '/index.html']) {
     const entry = await f.remote(route, { origin: null, headers });
@@ -124,7 +139,6 @@ test('QR and PWA document navigation preserves authentication and cross-site API
   for (const overrides of [
     { 'Sec-Fetch-Mode': 'cors' },
     { 'Sec-Fetch-Dest': 'iframe' },
-    { 'Sec-Fetch-Dest': 'empty' },
   ]) {
     assert.equal((await f.remote('/join', { origin: null, headers: { ...headers, ...overrides } })).status, 403);
   }
@@ -143,8 +157,16 @@ test('QR and PWA document navigation preserves authentication and cross-site API
   const guestCookie = redeemed.headers['set-cookie'][0].split(';')[0];
   const guestPage = await f.remote('/', { cookie: guestCookie, origin: null, headers });
   assert.equal(guestPage.status, 200);
-  assert.match(guestPage.text, /guestForm/);
+  assert.match(guestPage.text, /data-role="guest"/); assert.match(guestPage.text, /id="input"/);
   assert.equal((await f.remote('/api/share', { cookie: guestCookie })).status, 403);
+  const otherFriend = await f.join('남아 있는 친구');
+  const left = await f.remote('/logout', { cookie: guestCookie });
+  assert.equal(left.status, 303);
+  assert.equal(left.headers.location, '/join');
+  assert.match(left.headers['set-cookie'][0], /Max-Age=0/);
+  assert.equal((await f.remote('/api/state', { cookie: guestCookie })).status, 401);
+  assert.equal((await f.remote('/api/state', { cookie: otherFriend.cookie })).status, 200);
+  assert.equal((await f.owner('/api/state')).status, 200);
   const { cookie } = await f.join('', 'owner');
   for (const route of ['/', '/index.html']) {
     const page = await f.remote(route, { cookie, origin: null, headers });
@@ -180,8 +202,8 @@ test('HTTPS proxy authenticates before room data, isolates guest permissions and
   assert.ok(!state.text.includes('개인 메모'));
   assert.equal(state.body.room, undefined);
   const guestPage = await f.remote('/', { cookie });
-  assert.match(guestPage.text, /guestForm/);
-  assert.ok(!guestPage.text.includes('shareBtn'));
+  assert.match(guestPage.text, /data-role="guest"/); assert.match(guestPage.text, /id="input"/);
+  assert.match(guestPage.text, /room-ui.mjs/);
   assert.equal((await f.remote('/api/send', { cookie, body: { text: '사람끼리 대화' } })).status, 200);
   assert.equal(f.calls.length, 0);
   assert.equal(f.app.store.messages.at(-1).displayName, '민수');
@@ -206,6 +228,100 @@ test('HTTPS proxy authenticates before room data, isolates guest permissions and
   assert.equal((await f.remote('/api/state', { cookie })).status, 401);
   await f.remote('/logout', { cookie: ownerMobile.cookie });
   assert.equal((await f.remote('/api/share', { cookie: ownerMobile.cookie })).status, 401);
+});
+
+test('friend discussion charges each call, blocks overlapping AI requests and keeps human chat', async t => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const f = await fixture(t, async () => { await gate; return { ok: true, text: '토론 의견' }; }, { ids: ['claude', 'gpt'] });
+  t.after(() => release());
+  const first = await f.join('토론 친구'), second = await f.join('채팅 친구');
+  await f.owner('/api/share/limits', { total: 20 });
+  const rejected = await f.owner('/api/share');
+  const id = rejected.body.guests.find(g => g.name === '토론 친구').id;
+  await f.owner('/api/share/limits', { guestId: id, limit: 4 });
+  assert.equal((await f.remote('/api/send', { cookie: first.cookie, body: { text: '토론', discussion: true } })).status, 429);
+  assert.equal(f.calls.length, 0);
+  await f.owner('/api/share/limits', { guestId: id, limit: 5 });
+  assert.equal((await f.remote('/api/send', { cookie: first.cookie, body: { text: '토론', discussion: true, webSearch: true } })).status, 200);
+  await f.wait(() => f.calls.length === 2);
+  const state = (await f.remote('/api/state', { cookie: second.cookie })).body;
+  assert.equal(state.sharedRoom.active.startedBy, '토론 친구');
+  assert.equal(state.sharedRoom.active.models, undefined);
+  assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '겹치는 토론', discussion: true } })).status, 409);
+  assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '@Claude 질문' } })).status, 409);
+  assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '사람끼리 채팅' } })).status, 200);
+  release();
+  await f.wait(() => f.app.view().room.active === null);
+  assert.equal(f.calls.length, 5);
+  assert.ok(f.calls.every(call => call[3].webSearch === true));
+  assert.equal(f.app.view().room.webSearch, false);
+  assert.ok(f.app.store.messages.some(m => m.phase === 'final' && m.addressedTo === '토론 친구'));
+  const quota = (await f.remote('/api/state', { cookie: first.cookie })).body.usage;
+  assert.equal(quota.used, 5); assert.equal(quota.remaining, 0); assert.equal(quota.total, 5);
+  f.tick();
+  assert.equal((await f.remote('/api/send', { cookie: first.cookie, body: { text: '한도 초과 토론', discussion: true } })).status, 429);
+  assert.equal(f.calls.length, 5);
+  assert.equal((await f.remote('/api/room', { cookie: first.cookie, body: { discussion: true } })).status, 403);
+});
+
+test('friend rejoin preserves identity and quota; solo and permissions are enforced by server', async t => {
+  const f = await fixture(t);
+  const friend = await f.join('재입장 친구');
+  const original = (await f.remote('/api/state', { cookie: friend.cookie })).body;
+  const logout = await f.remote('/logout', { cookie: friend.cookie });
+  const returnCookie = logout.headers['set-cookie'].find(c => c.startsWith('room_return=')).split(';')[0];
+  assert.match(logout.headers['set-cookie'][1], /HttpOnly; Secure; SameSite=Strict/);
+  assert.equal((await f.remote('/api/share/rejoin', { body: {} })).status, 401);
+  assert.equal((await f.remote('/api/share/rejoin', { cookie: returnCookie, body: {}, origin: 'https://evil.example' })).status, 403);
+  const restored = await f.remote('/api/share/rejoin', { cookie: returnCookie, body: {} });
+  assert.equal(restored.status, 200);
+  const cookie = restored.headers['set-cookie'][0].split(';')[0];
+  const after = (await f.remote('/api/state', { cookie })).body;
+  assert.equal(after.selfId, original.selfId); assert.deepEqual(after.usage, original.usage);
+  assert.equal((await f.owner('/api/share')).body.guests.length, 1);
+  assert.equal((await f.remote('/api/share/access', { cookie, body: { mode: 'solo' } })).status, 403);
+  assert.equal((await f.owner('/api/share/access', { mode: 'solo' })).status, 200);
+  assert.equal((await f.remote('/api/state', { cookie })).status, 403);
+  assert.equal((await f.remote('/api/share/rejoin', { cookie: returnCookie, body: {} })).status, 403);
+  await f.owner('/api/share/access', { mode: 'multi', permissions: { chat: false, discussion: false, house: false, questions: false } });
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '권한 없는 채팅' } })).status, 403);
+  assert.equal((await f.remote('/api/house/ballot', { cookie, body: { id: 'x', choice: 0 } })).status, 403);
+  await f.owner('/api/share/access', { permissions: { chat: true } });
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '토론', discussion: true } })).status, 403);
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: 'AI', askAI: true } })).status, 403);
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '사람끼리 대화' } })).status, 200);
+  assert.equal(f.calls.length, 0);
+  await f.owner('/api/share/revoke-guest', { id: after.selfId });
+  assert.equal((await f.remote('/api/share/rejoin', { cookie: returnCookie, body: {} })).status, 401);
+});
+
+test('friend presence distinguishes away, online and disconnected', async t => {
+  const f = await fixture(t), friend = await f.join('자리비움 친구');
+  const stream = http.get(f.proxy() + '/events', { headers: { Host: 'room.example.ts.net:8443', Cookie: friend.cookie } });
+  t.after(() => stream.destroy());
+  await new Promise((resolve, reject) => { stream.on('error', reject); stream.on('response', res => { res.once('data', resolve); }); });
+  const person = () => f.app.view().participants.find(p => p.name === '자리비움 친구');
+  await f.wait(() => person()?.online);
+  assert.equal((await f.remote('/api/share/presence', { cookie: friend.cookie, body: { away: true } })).status, 200);
+  assert.equal(person().away, true);
+  await f.remote('/api/share/presence', { cookie: friend.cookie, body: { away: false } });
+  assert.equal(person().away, false);
+  stream.destroy();
+  await f.wait(() => !person().online);
+});
+
+test('guest web search uses one metered call without changing owner search settings', async t => {
+  const f = await fixture(t), friend = await f.join('검색 친구');
+  await f.start();
+  assert.equal((await f.remote('/api/send', { cookie: friend.cookie, body: { text: '웹에서 찾아줘', webSearch: true } })).status, 200);
+  await f.pump(); await f.wait(() => f.calls.length === 1 && f.app.store.messages.at(-1).from === 'claude');
+  assert.equal(f.calls[0][3].webSearch, true);
+  assert.equal((await f.remote('/api/state', { cookie: friend.cookie })).body.usage.used, 1);
+  assert.equal(f.app.view().room.webSearch, false);
+  await f.owner('/api/share/access', { permissions: { questions: false } }); f.tick();
+  assert.equal((await f.remote('/api/send', { cookie: friend.cookie, body: { text: '차단된 검색', webSearch: true } })).status, 403);
+  assert.equal(f.calls.length, 1);
 });
 
 test('friend total 15 limits actual calls, survives restart, rejects unmetered features, and leaves human chat usable', async (t) => {
@@ -320,7 +436,7 @@ test('guest UI reuses authenticated theme and portraits without exposing owner c
   const { cookie } = await f.join('친구화면');
   const initial = (await f.remote('/api/state', { cookie })).body;
   assert.ok(initial.selfId);
-  assert.equal(initial.members[0].maker, 'Anthropic');
+  assert.equal(initial.members.find(m => m.id === 'claude').maker, 'Anthropic');
   const own = f.app.store.addMessage({ from: 'user', guestId: initial.selfId, displayName: '친구화면', text: '내 메시지', ts: 2 });
   f.app.store.addMessage({ from: 'claude', text: '**답변**', model: 'test-model', replyTo: own.id, ts: 3 });
   f.app.store.addMessage({ from: 'claude', text: '과거 답장', replyTo: secret.id, ts: 4 });
@@ -332,22 +448,26 @@ test('guest UI reuses authenticated theme and portraits without exposing owner c
   assert.equal(state.messages.find(m => m.text === '과거 답장').replyPreview, undefined);
   assert.doesNotMatch(JSON.stringify(state), /입장 전 비밀|비공개 오류 경로/);
   assert.equal(state.room, undefined);
+  assert.equal(state.sharedRoom.models, undefined);
+  assert.equal(state.sharedRoom.memos, undefined);
+  assert.equal(state.sharedRoom.checks, undefined);
+  assert.deepEqual(state.files, []);
   const page = (await f.remote('/', { cookie })).text;
   assert.match(page, /\/style.css/); assert.match(page, /\/assistant.css/);
-  assert.match(page, /id="themeBtn"/); assert.match(page, /id="guestForm"/);
-  assert.doesNotMatch(page, /id="(?:powerBtn|chatterBtn|taskBtn|wsBtn|shareBtn)"/);
-  for (const asset of ['/style.css', '/assistant.css', '/format.mjs', '/avatars/claude-pixel-128.png',
+  assert.match(page, /id="themeBtn"/); assert.match(page, /id="input"/); assert.match(page, /room-ui.mjs/);
+  assert.match(page, /data-role="guest"/); assert.doesNotMatch(page, /guestForm|src="\/task-screen.js"|src="\/share.js"/);
+  for (const asset of ['/style.css', '/assistant.css', '/format.mjs', '/assistant.js', '/room-ui.mjs', '/status.mjs', '/dot-title.mjs', '/discussion-stage.mjs', '/dot-characters.mjs', '/house.js', '/house.css', '/avatars/claude-pixel-128.png',
     '/avatars/gpt-pixel-128.png', '/avatars/gemini-pixel-128.png']) {
     assert.equal((await f.remote(asset, { cookie })).status, 200, asset);
-    assert.equal((await f.remote(asset)).status, 401, asset);
+    assert.equal((await f.remote(asset)).status, asset === '/style.css' ? 200 : 401, asset);
   }
-  for (const asset of ['/assistant.js', '/task-screen.js', '/avatars/dev.svg', '/ws/private.txt'])
+  for (const asset of ['/task-screen.js', '/avatars/dev.svg', '/ws/private.txt'])
     assert.equal((await f.remote(asset, { cookie })).status, 403, asset);
   await f.owner('/api/share/disconnect', {}); await f.wait(() => f.stopped() === 1);
   await f.owner('/api/share/connect', { public: true });
   for (const asset of ['/style.css', '/assistant.css', '/format.mjs', '/avatars/claude-pixel-128.png'])
     assert.equal((await f.remote(asset, { cookie })).status, 200, asset);
-  for (const route of ['/assistant.js', '/api/room', '/api/tasks', '/api/share'])
+  for (const route of ['/api/room', '/api/tasks', '/api/share'])
     assert.equal((await f.remote(route, { cookie })).status, 403, route);
 });
 
@@ -371,13 +491,15 @@ test('public Funnel denies owner tokens/cookies and all settings/files/tasks, wh
   assert.equal(same.status, 200);
   assert.equal((await f.owner('/api/share')).body.invites.find((i) => i.id === invitation.id).uses, 1);
   const blocked = ['/api/room', '/api/share', '/api/share/limits', '/api/share/connect', '/api/share/invite',
-    '/api/notes', '/api/models', '/api/check/call', '/api/dev/state', '/api/house', '/api/world',
-    '/api/tasks', '/api/tasks/ai', '/api/tasks/attachments', '/api/tasks/events', '/task-screen.js', '/assistant.js', '/api/file?path=secret.txt', '/ws/private.html'];
+    '/api/notes', '/api/models', '/api/check/call', '/api/dev/state', '/api/world',
+    '/api/tasks', '/api/tasks/ai', '/api/tasks/attachments', '/api/tasks/events', '/task-screen.js', '/api/file?path=secret.txt', '/ws/private.html'];
   for (const route of blocked) {
     assert.equal((await f.remote(route, { cookie })).status, 403, route);
     assert.equal((await f.remote(route, { cookie: privateOwner.cookie, body: {} })).status, 403, route);
   }
-  assert.match((await f.remote('/', { cookie })).text, /guestForm/);
+  assert.equal((await f.remote('/api/house', { cookie })).status, 200);
+  assert.equal((await f.remote('/api/house/undo', { cookie, body: {} })).status, 403);
+  assert.match((await f.remote('/', { cookie })).text, /data-role="guest"/);
   await f.start();
   assert.equal((await f.remote('/api/send', { cookie, body: { text: 'AI 질문', askAI: true, ai: 'claude' } })).status, 200);
   await f.pump();
@@ -392,7 +514,7 @@ test('public Funnel denies owner tokens/cookies and all settings/files/tasks, wh
   await new Promise((resolve, reject) => {
     const req = http.get(f.proxy() + '/events', { headers: { Host: 'room.example.ts.net:8443', Cookie: cookie } }, res => {
       res.once('data', chunk => {
-        try { assert.match(chunk.toString(), /"role":"guest"/); assert.doesNotMatch(chunk.toString(), /"checks":|"files":/); res.destroy(); resolve(); }
+        try { assert.match(chunk.toString(), /"role":"guest"/); assert.doesNotMatch(chunk.toString(), /"checks":/); res.destroy(); resolve(); }
         catch (e) { res.destroy(); reject(e); }
       });
     }); req.on('error', reject);
@@ -512,4 +634,148 @@ test('Talk OFF cancels a guest response and queued batches, and cannot be overri
   assert.equal((await f.remote('/api/room', { cookie, body: { auto: { on: true } } })).status, 403);
   await f.start(); await f.pump(10000);
   assert.equal(f.calls.length, 1, 'queued messages are not replayed after OFF');
+});
+
+test('beta shared house and ballots use server identity across owner devices and guest reconnects', async t => {
+  const f = await fixture(t);
+  const friend = await f.join('투표친구'), ownerA = await f.join('', 'owner'), ownerB = await f.join('', 'owner');
+  for (const cookie of [friend.cookie, ownerA.cookie, ownerB.cookie]) {
+    await new Promise((resolve, reject) => {
+      const req = http.get(f.proxy() + '/events', { headers: { Host: 'room.example.ts.net:8443', Cookie: cookie } }, res => {
+        res.once('data', resolve); res.on('error', reject);
+      });
+      req.on('error', reject); t.after(() => req.destroy());
+    });
+  }
+  await f.app.houseRuntime.tick();
+  const state = (await f.remote('/api/house', { cookie: friend.cookie })).body;
+  assert.equal(state.role, 'guest'); assert.equal(state.player, null);
+  const id = state.story.current.id;
+  const notice = (await f.remote('/api/state', { cookie: friend.cookie })).body.messages.filter(m => m.kind === 'house-vote' && m.voteId === id);
+  assert.equal(notice.length, 1); assert.match(notice[0].text, /투표가 열렸어요/);
+  f.app.houseRuntime.changed();
+  assert.equal(f.app.store.messages.filter(m => m.kind === 'house-vote' && m.voteId === id).length, 1);
+  assert.equal((await f.remote('/joint-vote.mjs', { cookie: friend.cookie })).status, 200);
+  const cast = (cookie, choice, extra = {}) => f.remote('/api/house/ballot', { cookie, body: { id, choice, ...extra } });
+  assert.equal((await cast(ownerA.cookie, 1)).status, 200);
+  assert.equal((await cast(ownerB.cookie, 0)).status, 409, 'owner devices share exactly one identity');
+  assert.equal((await cast(friend.cookie, 1, { voter: 'ai:gpt', role: 'owner' })).status, 200);
+  assert.equal((await cast(friend.cookie, 0)).status, 409);
+  assert.equal((await f.remote('/api/house/undo', { cookie: friend.cookie, body: {} })).status, 403);
+  f.tick(60001); await f.app.houseRuntime.tick();
+  const shared = (await f.remote('/api/house', { cookie: friend.cookie })).body;
+  assert.equal(shared.story.current.status, 'applied');
+  assert.deepEqual(shared.story.current.counts, [0, 2]);
+  assert.equal(shared.story.current.myChoice, 1);
+  assert.equal((await cast(friend.cookie, 0)).status, 409);
+  assert.equal((await f.owner('/api/house')).body.story.environment.yard, 'bbq');
+  await f.app.houseRuntime.tick();
+  assert.equal(f.app.house.s.story.history.length, 1);
+});
+
+test('beta friends share one 12-second normal-flow call and a single budget charge', async t => {
+  const f = await fixture(t);
+  const a = await f.join('묶음가'), b = await f.join('묶음나'); await f.start();
+  await f.remote('/api/send', { cookie: a.cookie, body: { text: '오늘 만나자' } });
+  f.tick(); await f.remote('/api/send', { cookie: b.cookie, body: { text: '좋아 같이 가자' } });
+  await f.pump(5000); assert.equal(f.calls.length, 0);
+  await f.pump(10001); assert.equal(f.calls.length, 1);
+  assert.match(f.calls[0][2], /오늘 만나자/); assert.match(f.calls[0][2], /좋아 같이 가자/);
+  const state = (await f.owner('/api/share')).body;
+  assert.equal(state.usage.total, 1); assert.equal(state.calls.friend, 1);
+  await f.pump(); assert.equal(f.calls.length, 1);
+});
+
+test('beta private owner Serve remains separate while public Funnel serves friends only', async t => {
+  const root = temporary(t), targets = {};
+  const tunnel = (role, port) => async target => {
+    targets[role] = target; return { url: `https://separate.example.ts.net:${port}`, stop: async () => {} };
+  };
+  const app = createAssistantServer({ root, cfg: loadConfig(path.join(root, 'config.json')), adapter: { available: () => ({}) },
+    tailscaleServe: tunnel('owner', 8444), tailscaleFunnel: tunnel('guest', 8443) });
+  t.after(() => app.close()); await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  const local = `http://127.0.0.1:${app.server.address().port}`;
+  const request = async (route, body) => (await fetch(local + route, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {})).json();
+  await request('/api/share/connect', {});
+  await request('/api/share/connect', { public: true });
+  assert.notEqual(targets.owner, targets.guest);
+  const ownerInvite = await request('/api/share/invite', { role: 'owner' });
+  const friendInvite = await request('/api/share/invite', { role: 'guest' });
+  assert.equal(new URL(ownerInvite.link).port, '8444'); assert.equal(new URL(friendInvite.link).port, '8443');
+  const remote = (role, route, body, cookie) => new Promise((resolve, reject) => {
+    const port = role === 'owner' ? 8444 : 8443;
+    const req = http.request(targets[role] + route, { method: body ? 'POST' : 'GET', headers: { Host: `separate.example.ts.net:${port}`,
+      Origin: `https://separate.example.ts.net:${port}`, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) } }, res => {
+      let text = ''; res.on('data', c => text += c); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(text), cookie: res.headers['set-cookie']?.[0].split(';')[0] }));
+    }); req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
+  });
+  const token = new URLSearchParams(new URL(ownerInvite.link).hash.slice(1)).get('token');
+  assert.equal((await remote('guest', '/api/share/redeem', { token })).status, 403);
+  const pending = await remote('owner', '/api/share/redeem', { token }); assert.equal(pending.status, 202);
+  assert.equal(pending.cookie, undefined);
+  assert.equal((await remote('owner', '/api/share/pairing', { id: 'fake', approve: true })).status, 403);
+  assert.equal((await remote('guest', '/api/share/pair-status', { token, challenge: pending.body.challenge })).status, 403);
+  const requests = await request('/api/share/pairing');
+  await request('/api/share/pairing', { id: requests.requests[0].id, approve: true });
+  const grant = await remote('owner', '/api/share/pair-status', { token, challenge: pending.body.challenge }); assert.equal(grant.status, 200);
+  assert.equal((await remote('owner', '/api/share/pair-status', { token, challenge: pending.body.challenge })).status, 401);
+  assert.equal((await remote('owner', '/api/share', undefined, grant.cookie)).status, 200);
+  assert.equal((await remote('guest', '/api/share', undefined, grant.cookie)).status, 403);
+  assert.equal((await remote('guest', '/api/tasks', undefined, grant.cookie)).status, 403);
+});
+
+test('owner pairing rejects denied, expired, mismatched and canceled requests before granting a session', t => {
+  const root = temporary(t); let now = Date.now();
+  const sharing = new Sharing(root, () => now);
+  const invite = sharing.invite('owner');
+  const p = sharing.requestOwnerPair(invite.secret, 'Mozilla/5.0 (Linux; Android 14; SM-S928N Build/ABC)');
+  assert.match(sharing.pendingPairs()[0].name, /SM-S928N/);
+  assert.deepEqual(sharing.claimPair(p.challenge, invite.secret, 0, '방장'), { pending: true });
+  assert.equal(Object.keys(sharing.data.sessions).length, 0);
+  assert.throws(() => sharing.claimPair(p.challenge, 'a'.repeat(43), 0, '방장'), /만료/);
+  sharing.decidePair(sharing.pendingPairs()[0].id, false);
+  assert.throws(() => sharing.claimPair(p.challenge, invite.secret, 0, '방장'), /거절/);
+  const expired = sharing.requestOwnerPair(invite.secret, 'iPhone'); now += 180001;
+  assert.throws(() => sharing.claimPair(expired.challenge, invite.secret, 0, '방장'), /만료/);
+  const canceled = sharing.requestOwnerPair(invite.secret, 'Android');
+  sharing.decidePair(sharing.pendingPairs()[0].id, true); sharing.revokeInvite(invite.id);
+  assert.throws(() => sharing.claimPair(canceled.challenge, invite.secret, 0, '방장'), /만료/);
+  assert.equal(Object.keys(sharing.data.sessions).length, 0);
+});
+
+test('guest gallery serves only AI media shared after entry; private files, old media and writes stay blocked', async t => {
+  const f = await fixture(t);
+  const add = (name, content, meta = {}) => {
+    const rel = `images/${name}`; fs.mkdirSync(path.dirname(f.app.store.abs(rel)), {recursive:true});
+    fs.writeFileSync(f.app.store.abs(rel),content); f.app.store.touchMeta(rel,'claude',true);
+    Object.assign(f.app.store.meta[rel],meta); return rel;
+  };
+  const old = add('old.png',Buffer.from('old'));
+  f.app.store.addMessage({from:'claude',text:'',attach:{path:old}});
+  const friend = await f.join('보관함친구');
+  const picture = add('shared.png',Buffer.from('shared'));
+  const privateFile = add('private.txt','private PC text');
+  const unpublished = add('unpublished.png',Buffer.from('unpublished'));
+  const game = add('shared.html','<h1>shared game</h1>',{activity:'game',title:'함께 만든 게임'});
+  f.app.store.addMessage({from:'claude',text:'',attach:{path:picture}});
+  f.app.store.addMessage({from:'claude',text:'',attach:{path:privateFile}});
+  f.app.store.addMessage({from:'claude',text:'',game:{path:game,title:'함께 만든 게임'}});
+  await f.owner('/api/share/connect',{public:true});
+  const gallery = await f.remote('/api/gallery',{cookie:friend.cookie});
+  assert.equal(gallery.status,200); assert.deepEqual(gallery.body.files.map(f=>f.path).sort(),[picture,game].sort());
+  const state = (await f.remote('/api/state',{cookie:friend.cookie})).body;
+  assert.deepEqual(state.files,gallery.body.files);
+  assert.ok(state.messages.some(m=>m.attach?.path===picture));
+  assert.ok(!state.messages.some(m=>m.attach?.path===privateFile));
+  for (const rel of [old,privateFile,unpublished,'../config.json','/etc/passwd'])
+    assert.equal((await f.remote(`/api/gallery/file?path=${encodeURIComponent(rel)}`,{cookie:friend.cookie})).status,403,rel);
+  assert.equal((await f.remote(`/api/gallery/file?path=${encodeURIComponent(picture)}`,{cookie:friend.cookie})).text,'shared');
+  const html = await f.remote(`/api/gallery/file?path=${encodeURIComponent(game)}`,{cookie:friend.cookie});
+  assert.equal(html.status,200); assert.match(html.headers['content-security-policy'],/sandbox allow-scripts/);
+  assert.equal((await f.remote('/api/gallery/file',{cookie:friend.cookie,body:{path:picture}})).status,403);
+  for (const rel of ['/api/file?path='+picture,'/ws/'+picture,'/api/tasks'])
+    assert.equal((await f.remote(rel,{cookie:friend.cookie})).status,403);
+  assert.equal((await f.remote('/api/gallery')).status,401);
+  const manifest = (await f.remote('/manifest.webmanifest')).body;
+  assert.deepEqual(manifest.related_applications,[{platform:'webapp',url:'https://room.example.ts.net:8443/manifest.webmanifest',id:'https://room.example.ts.net:8443/'}]);
 });

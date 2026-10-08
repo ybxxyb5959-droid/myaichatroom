@@ -1,6 +1,6 @@
 {
   "name": "ai-chatroom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A personal AI group chat for Windows",
   "author": "AI Chatroom contributors",
   "license": "MIT",
@@ -12,7 +12,8 @@
     "desktop": "electron .",
     "test": "node --test",
     "test:desktop": "node desktop/smoke.mjs",
-    "dist:win": "electron-builder --win nsis --x64 --publish never"
+    "build:android": "powershell -NoProfile -ExecutionPolicy Bypass -File android/build.ps1",
+    "dist:win": "electron-builder --win --x64 --publish never"
   },
   "dependencies": {
     "qrcode": "1.5.4",
@@ -24,7 +25,8 @@
   },
   "build": {
     "appId": "io.github.ybxxyb5959.ai-chatroom",
-    "productName": "AI Chatroom",
+    "productName": "AI 단톡방",
+    "afterPack": "desktop/after-pack.cjs",
     "asar": true,
     "directories": {
       "output": "dist"
@@ -40,11 +42,14 @@
       "package.json"
     ],
     "win": {
-      "target": ["nsis"],
-      "artifactName": "AI-Chatroom-Setup-${version}-${arch}.${ext}",
+      "icon": "public/app.ico",
+      "target": ["nsis", "portable"],
       "signAndEditExecutable": false
     },
     "nsis": {
+      "artifactName": "AI-Chatroom-Setup-${version}-${arch}.${ext}",
+      "installerIcon": "public/app.ico",
+      "uninstallerIcon": "public/app.ico",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -53,6 +58,10 @@
       "shortcutName": "AI 단톡방",
       "deleteAppDataOnUninstall": false,
       "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "AI-Chatroom-${version}-Portable.${ext}",
+      "requestExecutionLevel": "user"
     }
   }
 }

@@ -94,6 +94,18 @@
 .hs-selected-event small { display: block; margin-bottom: 6px; }
 .hs-selected-event button { background: transparent; color: inherit; border: 1px solid var(--line, #0002); border-radius: 6px; padding: 4px 7px; cursor: pointer; }
 .house button:focus-visible { outline: 3px solid #247af2; outline-offset: 3px; }
+.hs-story { position: absolute; z-index: 3; left: 12px; top: 120px; width: min(320px, calc(100vw - 24px)); max-height: 38vh; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); font-size: 12px; }
+.hs-story[hidden] { display: none; }
+.hs-story summary { cursor: pointer; min-height: 28px; }
+.hs-story small, .hs-vote small { display: block; color: var(--muted); }
+.hs-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.house .hs-choices button { min-width: 0; min-height: 44px; display: grid; gap: 5px; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; }
+.hs-choices button[aria-pressed="true"] { border-color: var(--accent); }
+.hs-choices progress { width: 100%; accent-color: var(--accent); }
+.hs-opinions p { margin: 5px 0; }
+.hs-story-result { animation: hs-result .7s ease-out; }
+@keyframes hs-result { from { background: var(--accent); } to { background: transparent; } }
+@media (max-width: 640px) { .house .hs-story { top: 118px; left: 6px; width: calc(100vw - 12px); max-height: 24vh; box-sizing: border-box; } }
 @media (max-width: 640px) {
   .hs-bar { gap: 6px; top: 6px; left: 6px; right: 6px; }
   .hs-bar span { font-size: 10px; }
@@ -111,3 +123,43 @@
   .house .hs-vote, .house .hs-activity { top: auto; bottom: calc(var(--hs-chat-height, 160px) + 12px); left: auto; right: 6px; width: min(280px, calc(100vw - 12px)); max-height: 35vh; overflow: auto; }
   .house .hs-activity.collapsed { width: auto; }
 }
+/* Shared story cards in the house and ordinary chat. */
+.joint-vote { color: var(--text); text-align: left; font-size: 13px; line-height: 1.55; }
+.joint-vote header, .joint-vote-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.joint-vote-heading { font-weight: 800; font-size: 17px; }
+.joint-vote-status { flex-shrink: 0; padding: 3px 9px; border-radius: 20px; background: var(--bg); color: var(--muted); font-size: 12px; font-weight: 700; }
+.joint-vote-status.is-open { color: var(--accent); background: color-mix(in srgb,var(--accent) 12%,transparent); }
+.joint-vote-story { margin: 14px 0; padding: 16px; border-radius: 16px; background: color-mix(in srgb,var(--text) 5%,var(--panel)); }
+.joint-vote-story > small { color: var(--muted); font-size: 12px; font-weight: 600; }
+.joint-vote h3 { margin: 8px 0; font-size: 18px; line-height: 1.4; }
+.joint-vote p { margin: 8px 0; overflow-wrap: anywhere; }
+.joint-vote-opinions { color: var(--muted); font-size: 12px; }
+.joint-vote-choices { display: grid; gap: 10px; }
+.joint-vote .joint-vote-choices button { width: 100%; display: grid; gap: 16px; min-height: 90px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.joint-vote .joint-vote-choices button:disabled { cursor: default; opacity: 1; }
+.joint-vote .joint-vote-choices button[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb,var(--accent) 8%,var(--panel)); }
+.joint-choice-title, .joint-choice-meter { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.joint-choice-title b { font-size: 15px; }
+.joint-check { color: var(--accent); font-weight: 800; font-size: 19px; }
+.joint-choice-meter progress { display: block; flex: 1; width: 0; height: 8px; border: 0; border-radius: 10px; overflow: hidden; appearance: none; background: var(--line); accent-color: var(--accent); }
+.joint-choice-meter progress::-webkit-progress-bar { background: var(--line); border-radius: 10px; }
+.joint-choice-meter progress::-webkit-progress-value { background: var(--accent); border-radius: 10px; }
+.joint-choice-meter progress::-moz-progress-bar { background: var(--accent); border-radius: 10px; }
+.joint-choice-meter > span { color: var(--muted); white-space: nowrap; }
+.joint-vote footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin-top: 14px; color: var(--muted); font-size: 12px; }
+.joint-participation { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
+.joint-result { color: var(--accent); font-weight: 700; }
+.joint-vote-error { color: var(--danger,#e36b6b); }
+.joint-vote-summary { flex-wrap: wrap; list-style: none; }
+.joint-vote-summary::-webkit-details-marker { display: none; }
+.joint-vote-summary > small { width: 100%; font-size: 11px; color: var(--muted); }
+.house .hs-story { width: min(360px,calc(100vw - 24px)); max-height: 55vh; padding: 14px; border-radius: 18px; }
+.sys.k-house-vote { max-width: 620px; width: 100%; margin: 14px auto; text-align: left; color: var(--text); opacity: 1; }
+.chat-vote-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.chat-vote-notice > b { flex: 1; min-width: 150px; font-size: 13px; }
+.chat-vote-notice > div { display: flex; gap: 6px; }
+.chat-vote-notice button { padding: 7px 12px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.chat-vote-notice [data-participate] { background: var(--accent); border-color: var(--accent); color: white; }
+.chat-vote-card { margin-top: 10px; padding: 18px; border: 1px solid var(--line); border-radius: 22px; background: var(--panel); }
+.chat-vote-card[hidden] { display: none; }
+@media(max-width:640px) { .house .hs-story { width: calc(100vw - 12px); max-height: 34vh; padding: 10px; } .chat-vote-card { padding: 14px; border-radius: 18px; } .joint-vote h3 { font-size: 17px; } .joint-vote-story { padding: 12px; } }

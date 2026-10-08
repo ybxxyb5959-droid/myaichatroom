@@ -10,4 +10,9 @@ assets/sheets/
 backups/
 node_modules/
 dist/
+.codex-remote-attachments/
 *.log
+android/.gradle/
+android/**/build/
+android/local.properties
+android/*.jks

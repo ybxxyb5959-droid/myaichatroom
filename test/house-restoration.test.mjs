@@ -5,6 +5,7 @@ import path from 'node:path';
 import { roomFixture } from './helpers/room.mjs';
 import { House } from '../lib/house.mjs';
 import { buildBrief } from '../lib/prompt.mjs';
+import { dayKey } from '../lib/auto.mjs';
 
 const home = (store) => {
   const h = new House(path.join(store.dataDir, 'house.json'), { ids: ['claude', 'gpt', 'gemini'], names: {} });
@@ -84,6 +85,30 @@ test('house construction uses its own prompt and counted calls; OFF and regular 
   await s.advance(2 * 3600000);
   assert.equal(s.calls.length, 1);
   assert.deepEqual(fs.readFileSync(s.app.house.file), saved);
+});
+
+test('building and decorating continue beyond former daily caps with the current sequential scheduler', async (t) => {
+  for (const [level, previousCap] of [['low', 3], ['medium', 12], ['high', 100]]) {
+    for (const phase of ['build', 'life']) {
+      await t.test(`${level}: ${phase}`, async (t) => {
+        const s = await roomFixture(t, { ids: ['gpt'], cfg: { house: { level } },
+          discussionReply: () => ({ ok: true, text: '{"actions":[]}' }) });
+        await s.start();
+        await s.post('/api/house/continue-solo', {});
+        s.app.house.s.phase = phase;
+        s.clock.now += 60001;
+        s.app.store.state.houseUsage = { day: dayKey(s.clock.now), calls: previousCap };
+        await s.app.houseRuntime.tick();
+        assert.equal(s.calls.length, 1);
+        assert.equal(s.app.store.state.houseUsage.calls, previousCap + 1);
+        s.clock.now++;
+        await s.app.houseRuntime.tick();
+        assert.equal(s.calls.length, 2);
+        assert.equal(s.app.store.state.houseUsage.calls, previousCap + 2);
+        assert.equal(s.app.room.auto.usage.calls, 2, 'calls remain counted without imposing a cap');
+      });
+    }
+  }
 });
 
 test('stopping the room waits for a house call and refuses its late layout changes', async (t) => {

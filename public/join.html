@@ -1,10 +1,27 @@
 <!doctype html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#141820"><meta name="referrer" content="no-referrer">
-<title>AI 단톡방 입장</title><link rel="stylesheet" href="/share.css"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png"></head>
-<body class="phone-page"><main class="phone-card"><h1 id="joinTitle">이름이 무엇인가요?</h1>
-<p id="joinNote">이름을 입력하면 친구로 입장합니다. 별도 회원가입은 필요 없습니다.</p>
+<title>AI 단톡방 입장</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/share.css"><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png?v=20261008"><link rel="icon" type="image/png" href="/icon-192.png?v=20261008">
+<meta name="application-name" content="AI 단톡방"><meta name="apple-mobile-web-app-title" content="AI 단톡방">
+</head>
+<body class="phone-page join-page">
+<div class="app ws-closed join-room" aria-hidden="true" inert>
+  <aside class="side"><div class="side-head"><div class="brand-name">AI 단톡방</div><div class="brand-sub">친구들과 함께하는 공간</div></div>
+    <div class="side-sec"><div class="sec-label">멤버</div><ul class="members">
+      <li class="member"><div class="me-av">G</div><div class="m-info"><div class="m-name">Gemini</div><div class="m-status">Google</div></div></li>
+      <li class="member"><div class="me-av">C</div><div class="m-info"><div class="m-name">ChatGPT</div><div class="m-status">OpenAI</div></div></li>
+      <li class="member"><div class="me-av">C</div><div class="m-info"><div class="m-name">Claude</div><div class="m-status">Anthropic</div></div></li>
+    </ul></div></aside>
+  <main class="chat"><header class="chat-head"><div class="head-title"><div class="t">AI 단톡방</div><div class="s">대화 · 집짓기 · 함께 만드는 이야기</div></div><span>🏠</span></header>
+    <div class="timeline join-preview"><div class="join-ghost"></div><div class="join-ghost mine"></div><div class="join-ghost short"></div></div>
+    <div class="composer"><div class="join-compose">채팅을 입력하세요.<span>➤</span></div></div>
+  </main>
+</div>
+<div class="join-overlay"><main class="phone-card join-dialog" role="dialog" aria-modal="true" aria-labelledby="joinTitle" aria-describedby="joinNote">
+<div class="join-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v12H9l-4 4V4Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8 9h8m-8 3h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+<span class="join-eyebrow">AI 단톡방에 초대됐어요</span><h1 id="joinTitle">함께 이야기해요</h1>
+<p id="joinNote">친구들에게 보여줄 이름을 입력해 주세요.<br>회원가입 없이 바로 함께할 수 있어요.</p>
 <form id="joinForm"><label id="nameLabel">대화에 표시할 이름<input id="joinName" maxlength="24" autocomplete="nickname" required></label>
-<button id="joinSubmit">입장하기</button></form><p id="joinError" class="share-error" role="alert"></p>
-<p class="share-note">친구용 공개 링크는 별도 앱 설치 없이 열 수 있습니다. 방장 PC와 단톡방 앱이 켜져 있어야 합니다. 입장 후 홈 화면에 추가할 수 있습니다.</p></main>
+<button id="joinSubmit">함께하기 <span aria-hidden="true">↗</span></button></form><p id="joinError" class="share-error" role="alert"></p>
+<p class="share-note join-footnote">방장 PC와 단톡방 앱이 켜져 있는 동안 함께할 수 있어요.</p></main></div>
 <script type="module" src="/join.js"></script><script type="module" src="/pwa.js"></script></body></html>

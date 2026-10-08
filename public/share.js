@@ -19,8 +19,8 @@ dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria
 </div>
 <section id="shareOwnerPanel" class="share-panel" role="tabpanel" aria-labelledby="shareOwnerTab">
 <h3>기존 내 폰 연결 · 비공개 전용</h3>
-<ol><li>PC와 폰의 Tailscale에 <strong>같은 계정</strong>으로 로그인하세요.</li><li>위에서 HTTPS 연결을 켜고, 아래 버튼으로 QR코드를 만드세요.</li><li>폰 카메라로 QR코드를 찍고 링크를 열어 연결하세요.</li></ol>
-<p class="share-note">이 기존 방식은 폰에도 Tailscale이 필요합니다. Funnel 공개 주소에서는 방장 연결을 허용하지 않아요. 공개 연결을 먼저 끄고 사용하세요. 이 QR코드는 친구에게 보내지 마세요.</p>
+<ol><li>PC와 폰의 Tailscale에 <strong>같은 계정</strong>으로 로그인하고 연결을 켜세요.</li><li>아래 버튼으로 QR코드를 만들고 폰 카메라로 링크를 여세요.</li><li>PC에 뜨는 기기 승인 팝업에서 <strong>예</strong>를 누르면 연결됩니다.</li></ol>
+<p class="share-note">폰에도 Tailscale이 필요합니다. 방장은 비공개 8444 주소, 친구는 공개 8443 주소를 사용합니다. 이 QR코드는 친구에게 보내지 마세요. 브라우저에서 확인 가능한 기기 종류·모델을 승인 팝업에 표시합니다.</p>
 <button data-pair>내 폰 연결 QR 만들기</button>
 <section data-result="owner" class="share-result" hidden></section>
 <div class="share-home"><h3>폰 홈 화면에 추가하기</h3>
@@ -39,6 +39,9 @@ dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria
 <button data-invite>새 친구 초대 링크 만들기</button>
 <section data-result="guest" class="share-result" hidden></section>
 <details class="share-manage"><summary>친구 관리 · AI 사용 한도</summary>
+<h3>방 모드</h3><select data-room-mode aria-label="방 모드"><option value="multi">친구와 쓰기</option><option value="solo">혼자 쓰기</option></select>
+<p class="share-note">혼자 쓰기에서는 친구 입장과 접속을 닫습니다. 친구와 쓰기로 돌아오면 기존 친구가 재접속할 수 있어요.</p>
+<h3>친구 권한</h3><div class="share-permissions"><label><input type="checkbox" data-permission="chat"> 채팅</label><label><input type="checkbox" data-permission="questions"> AI 질문</label><label><input type="checkbox" data-permission="discussion"> 토론</label><label><input type="checkbox" data-permission="house"> 집·투표 참여</label></div>
 <h3>친구 AI 호출 한도</h3><p data-usage></p>
 <form data-limits><label>친구 공용 하루 AI 호출 <input name="total" type="number" min="0" max="1000" required value="100"></label> <button>저장</button></form>
 <p class="share-note">기본 공용 100회. 입장 권한이 있는 친구끼리 남은 한도를 균등 배분합니다. 친구 추가·내보내기·한도 변경 시 남은 몫만 다시 나누며 이미 쓴 횟수는 유지합니다. 브라우저를 닫거나 다시 열어도 초기화되지 않습니다. 자정(PC 시간)에 새로 배분합니다.</p>
@@ -96,9 +99,13 @@ async function refresh() {
   const state = await request('/api/share');
   $('[data-status]').textContent = state.url ? `${state.public ? '친구용 공개' : '기존 비공개'} 연결: ${state.url}` : '공유 연결이 꺼져 있습니다.';
   $('[data-usage]').textContent = `오늘 공용 ${state.usage.total}/${state.usage.limit}회 사용 · 친구 ${state.usage.participants}명`;
+  $('[data-usage]').textContent += ` · 실제 호출: 일반 ${state.calls?.ordinary || 0}, 친구 ${state.calls?.friend || 0}, 토론 ${state.calls?.discussion || 0}, 집 ${state.calls?.house || 0}`;
   $('[name=total]').value = state.usage.limit;
+  $('[data-room-mode]').value = state.mode;
+  $('[data-invite]').disabled = state.mode === 'solo';
+  dialog.querySelectorAll('[data-permission]').forEach(input => { input.checked = state.permissions[input.dataset.permission]; });
   $('[data-guests]').replaceChildren(...state.guests.map(guest => {
-    const li = row(`${guest.name} · 사용 ${guest.usage.used}회 · 배정 잔여 ${guest.usage.remaining}회`, '내보내기', async () => {
+    const li = row(`${guest.name} · ${state.participants?.find(p => p.id === guest.id)?.online ? '접속 중' : '오프라인'} · 사용 ${guest.usage.used}회 · 배정 잔여 ${guest.usage.remaining}회`, '내보내기', async () => {
       if (!confirm(`${guest.name}님의 입장 권한을 해제할까요?`)) return;
       await request('/api/share/revoke-guest', { id: guest.id }); await refresh();
     });
@@ -121,7 +128,7 @@ async function refresh() {
       async () => { await request('/api/share/revoke-invite', { id: invite.id }); await refresh(); })));
   }
   $('[data-devices]').replaceChildren(...state.devices.map(device => row(
-    `방장 기기 · ${new Date(device.exp).toLocaleDateString()}까지`, '연결 권한 해제',
+    `${device.name || '방장 기기'} · ${new Date(device.exp).toLocaleDateString()}까지`, '연결 권한 해제',
     async () => { if (confirm('이 기기의 로그인 권한을 해제할까요?')) { await request('/api/share/revoke-device', { id: device.id }); await refresh(); } })));
 }
 async function createInvite(role) {
@@ -137,11 +144,20 @@ async function createInvite(role) {
   image.src = result.qr; image.alt = title.textContent;
   const link = document.createElement('input'); link.readOnly = true; link.value = result.link; link.setAttribute('aria-label', '초대 링크');
   const copy = document.createElement('button'); copy.textContent = '링크 복사';
+  const share = document.createElement('button'); share.type = 'button'; share.textContent = '친구에게 공유';
+  share.hidden = role !== 'guest';
+  share.onclick = async () => {
+    try {
+      if (/AIChatroomOwner\/1/.test(navigator.userAgent)) location.href = `aichatroom-share://send?url=${encodeURIComponent(result.link)}`;
+      else if (navigator.share) await navigator.share({ title: 'AI 단톡방 초대', text: 'Chrome에서 열고 이름을 입력해 주세요.', url: result.link });
+      else { await navigator.clipboard.writeText(result.link); share.textContent = '복사됨 · 카카오톡에 붙여넣기'; }
+    } catch (error) { if (error.name !== 'AbortError') $('[data-error]').textContent = error.message; }
+  };
   copy.onclick = () => action(async () => {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(result.link);
     else { link.select(); throw new Error('주소를 길게 누르거나 Ctrl+C로 복사해 주세요.'); }
   });
-  box.append(title, note, image, link, copy); box.hidden = false;
+  box.append(title, note, image, link, copy, share); box.hidden = false;
   await refresh();
 }
 selectTab('guest');
@@ -153,12 +169,49 @@ button.onclick = () => {
 $('[data-close]').onclick = () => dialog.close();
 dialog.addEventListener('close', clearResults);
 $('[data-refresh]').onclick = () => action(refresh);
+setInterval(() => {
+  if (dialog.open && !dialog.contains(document.activeElement?.closest('input'))) refresh().catch(error => { $('[data-error]').textContent = error.message; });
+}, 5000);
+// Approval is available only on the local PC, even with the sharing panel closed.
+const pairDialog = document.createElement('dialog');
+pairDialog.className = 'share-dialog';
+pairDialog.setAttribute('aria-label', '기기 연결 승인');
+const pairTitle = document.createElement('h2'), pairNote = document.createElement('p'), pairError = document.createElement('p');
+pairNote.textContent = '내 휴대폰에서 요청한 연결인지 확인하세요. 예를 누르면 이 기기에 방장 권한을 부여합니다.';
+pairNote.className = 'share-note'; pairError.setAttribute('role', 'alert');
+const pairYes = document.createElement('button'), pairNo = document.createElement('button');
+pairYes.textContent = '예'; pairNo.textContent = '아니오'; pairYes.type = pairNo.type = 'button';
+const pairActions = document.createElement('div'); pairActions.className = 'share-pair-actions'; pairActions.append(pairYes, pairNo);
+pairDialog.append(pairTitle, pairNote, pairError, pairActions); document.body.append(pairDialog);
+let pairingRequest = null, pairingBusy = false;
+async function decidePair(approve) {
+  if (!pairingRequest || pairingBusy) return;
+  pairingBusy = true; pairYes.disabled = pairNo.disabled = true;
+  try { await request('/api/share/pairing', { id: pairingRequest.id, approve }); pairingRequest = null; pairDialog.close(); if (dialog.open) await refresh(); }
+  catch (error) { pairError.textContent = error.message; }
+  finally { pairingBusy = false; pairYes.disabled = pairNo.disabled = false; }
+}
+pairYes.onclick = () => decidePair(true); pairNo.onclick = () => decidePair(false);
+pairDialog.addEventListener('cancel', event => { event.preventDefault(); decidePair(false); });
+if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) setInterval(async () => {
+  if (pairingBusy || document.hidden) return;
+  try {
+    const result = await request('/api/share/pairing');
+    if (pairingRequest && !result.requests.some(r => r.id === pairingRequest.id)) { pairingRequest = null; pairDialog.close(); }
+    if (!pairingRequest && result.requests.length) {
+      pairingRequest = result.requests[0]; pairTitle.textContent = `${pairingRequest.name}으로 연결하시겠습니까?`; pairError.textContent = '';
+      pairDialog.showModal(); pairYes.focus();
+    }
+  } catch { /* The PC may be restarting; no approval is inferred. */ }
+}, 2000);
 $('[data-connect]').onclick = () => action(async () => {
   $('[data-status]').textContent = 'Tailscale 연결 확인 중…';
   await request('/api/share/connect', { public: $('#shareGuestTab').getAttribute('aria-selected') === 'true' }); await refresh();
 });
 $('[data-pair]').onclick = () => action(() => createInvite('owner'));
 $('[data-invite]').onclick = () => action(() => createInvite('guest'));
+$('[data-room-mode]').onchange = event => action(async () => { await request('/api/share/access', { mode: event.target.value }); await refresh(); });
+dialog.querySelectorAll('[data-permission]').forEach(input => { input.onchange = () => action(async () => { await request('/api/share/access', { permissions: { [input.dataset.permission]: input.checked } }); await refresh(); }); });
 $('[data-disconnect]').onclick = () => action(async () => {
   if (!confirm('휴대폰과 친구의 현재 연결을 끌까요?')) return;
   await request('/api/share/disconnect', {}); clearResults(); $('[data-status]').textContent = '연결을 종료하고 있습니다.';

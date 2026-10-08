@@ -65,6 +65,24 @@ test('unread messages schedule from the reading tick, exactly as upstream, not f
   await s.advance(2000); assert.equal(s.calls.length, 1);
 });
 
+test('chat frequency changes spontaneous timing but preserves mention replies and saved selection', async t => {
+  for (const frequency of ['quiet', 'lively']) {
+    const s = await roomFixture(t, { ids: ['gpt'] });
+    await s.start(); await s.advance(); await s.advance(8000);
+    const before = s.calls.length;
+    assert.equal((await s.post('/api/room', { chatFrequency: frequency })).status, 200);
+    s.app.runtime.spark.quick = false; s.app.runtime.spark.base = null;
+    await s.advance(115000);
+    assert.equal(s.calls.length, before + (frequency === 'lively' ? 1 : 0));
+    const count = s.calls.length;
+    await s.send('@GPT 질문'); await s.advance(); await s.advance(8000);
+    assert.equal(s.calls.length, count + 1);
+    await s.reopen();
+    assert.equal(s.app.view().room.chatFrequency, frequency);
+    assert.equal((await s.post('/api/room', { chatFrequency: 'invalid' })).status, 400);
+  }
+});
+
 test('normal read, cooldown, per-minute caps and opening silence delays use upstream values', () => {
   assert.deepEqual(SPEEDS.normal, { read: [4, 12], idle: [50, 120], spark: [150, 330], cooldown: 8, perMin: 10, typing: 1 });
   assert.deepEqual(SPEEDS.slow.spark, [300, 600]);

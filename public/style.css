@@ -705,3 +705,17 @@ select {
   .chat-head { padding: 10px 12px; }
   .line { max-width: 100%; }
 }
+/* Connection notice does not persist messages or credentials. */
+.pwa-connection { position: fixed; z-index: 120; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; right: 8px; padding: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 10px; font-size: 12px; }
+.pwa-connection[hidden] { display: none; }
+@media (max-width: 640px) {
+  .head-actions { flex-wrap: wrap; gap: 4px; }
+  .chat-head, .head-title, .timeline, .composer { min-width: 0; }
+  .icon-btn, .house button { min-height: 40px; }
+  .pwa-install { min-height: 44px; max-width: 100%; }
+}
+.pwa-help { max-width: min(420px,calc(100vw - 32px)); padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); color: var(--text); }
+.pwa-help::backdrop { background: #0008; backdrop-filter: blur(3px); }
+.pwa-help h2 { margin-top: 0; font-size: 18px; }
+.pwa-help p { line-height: 1.7; font-size: 14px; }
+.pwa-help > button { display: block; margin-left: auto; padding: 8px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent); color: white; cursor: pointer; }

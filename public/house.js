@@ -2,6 +2,7 @@
 import { esc } from './format.mjs';
 import { bindHouseControls } from './house-controls.mjs';
 import { actorActivity } from './house-view.mjs';
+import { voteHeaderHTML, voteCardHTML, bindVoteCard } from './joint-vote.mjs';
 
 const COLORS = { claude: '#d97a3a', gpt: '#2f7cf6', gemini: '#5b6cf0' };
 const panel = document.createElement('section');
@@ -26,6 +27,7 @@ panel.innerHTML = `
   <aside class="hs-progress" id="hsProgress" aria-label="공사 진행" hidden></aside>
   <aside class="hs-room" id="hsRoom" aria-label="선택한 방" hidden></aside>
   <aside class="hs-vote" id="hsVote" aria-label="인테리어 투표" hidden></aside>
+  <aside class="hs-story" id="hsStory" aria-label="공동 스토리 투표" hidden></aside>
   <aside class="hs-activity" id="hsActivity" aria-label="작업현황" hidden>
     <button type="button" id="hsActivityToggle" aria-expanded="true" aria-controls="hsActivityBody" aria-label="작업현황 접기">
       <span aria-hidden="true">🔨</span><b class="hs-activity-title">작업현황</b><span class="hs-activity-title" aria-hidden="true">▾</span>
@@ -96,6 +98,9 @@ async function initialize() {
 function frame(now) {
   if (panel.hidden) return;
   scene?.render(now);
+  panel.querySelectorAll('[data-deadline]').forEach(el => {
+    el.textContent = `남은 시간 ${Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000))}초`;
+  });
   if (now - activityAt >= 500) { activityAt = now; renderActivity(); }
   raf = requestAnimationFrame(frame);
 }
@@ -152,20 +157,37 @@ $('#hsMode').addEventListener('click', (e) => {
   const b = e.target.closest('[data-mode]');
   if (b) send('/api/house/mode', { mode: b.dataset.mode }).catch((err) => error(err.message));
 });
+function renderJoint(vote, target, story = false) {
+  target.hidden = !vote;
+  if (!vote) return;
+  const expanded = target.querySelector('details')?.open ?? matchMedia('(min-width: 641px)').matches;
+  target.innerHTML = `<details ${expanded ? 'open' : ''}><summary class="joint-vote-summary">${voteHeaderHTML(vote)}<small>${story ? `EPISODE ${String(vote.episode).padStart(2, '0')} · ` : ''}${esc(vote.title || '공동 인테리어 투표')}</small></summary>${voteCardHTML(vote, data, { header: false })}</details>`;
+  bindVoteCard(target, vote, async body => {
+    await send('/api/house/ballot', body);
+    window.dispatchEvent(new Event('house-update'));
+  });
+}
 function renderSide() {
+  const guest = data.role === 'guest';
+  $('#hsMode').hidden = guest;
+  $('#hsAsk').hidden = guest || $('#hsAsk').hidden;
+  $('#hsUndo').hidden = guest || $('#hsUndo').hidden;
   renderDiary();
+  if (guest) { $('#hsAsk').hidden = true; $('#hsUndo').hidden = true; }
+  renderJoint(data.story?.current, $('#hsStory'), true);
   renderActivity();
   $('#hsPlayer').hidden = $('#hsPlayerHelp').hidden = !data.player;
   const talk = data.crew?.waiting ? '건축 AI 호출은 쉬고 있어요. 일반 채팅은 계속할 수 있습니다.'
     : data.talk ? (data.busy ? 'AI가 계획을 검토하고 있어요' : data.nextAt > Date.now() ? '호출 오류로 재시도 대기 중' : 'Talk 켜짐 · 작업을 이어가요') : 'Talk 꺼짐 · 켜면 다시 움직여요';
   $('#hsStatus').textContent = `${data.crew?.waiting ? '동료 복귀 대기' : data.progress?.stage === 'planning' ? 'AI 공동 계획 논의 중' : data.progress ? `전체 공사 ${data.progress.percent}%` : data.phase === 'life' ? '기본 집 완성' : '집 짓는 중'}${data.talk ? '' : ' · 일시정지'}`;
-  $('#hsContinueSolo').hidden = !data.crew?.waiting || Object.keys(data.agents).length !== 1;
+  $('#hsContinueSolo').hidden = guest || !data.crew?.waiting || Object.keys(data.agents).length !== 1;
   $('#hsStatus').title = talk;
   $('#hsEmpty').hidden = !!(data.floors.length || data.walls.length || data.items.length);
   $('#hsPlan').hidden = !openPanels.has('hsPlan');
   const handoff = data.crew?.handoff;
   $('#hsPlanText').textContent = (data.plan || '아직 공동 계획이 없어요.') + (handoff
     ? `\n최근 작업 인계 (${handoff.source === 'ai' ? 'AI가 남긴 다음 작업' : '저장 상태 기준'})\n완료: ${handoff.completed}\n남은 일: ${handoff.remaining}\n다음: ${handoff.next} (${handoff.location.x}, ${handoff.location.z})` : '');
+  if (data.story) $('#hsPlanText').textContent += `\n공동 집 환경: 지붕 ${data.story.environment.roof} · 자재 ${data.story.environment.materials} · 마당 ${data.story.environment.yard || '미정'} · 다음 방 ${data.story.environment.room || '미정'}`;
   panel.querySelectorAll('[data-follow] span').forEach((s) => {
     const id = s.parentElement.dataset.follow;
     s.textContent = data.names[id]; s.parentElement.hidden = !data.agents[id];
@@ -183,6 +205,8 @@ function renderSide() {
   const vote = data.vote, votePanel = $('#hsVote');
   votePanel.hidden = !vote || vote.status !== 'open';
   if (!votePanel.hidden) {
+    if (vote.ballots) renderJoint(vote, votePanel);
+    else {
     votePanel.innerHTML = `<b>인테리어 의견이 갈렸어요</b><small>${time(vote.deadline)}까지 선택 · 미참여 시 기본안으로 진행 · 다른 공사는 계속됩니다.</small>`
       + vote.options.map((o, i) => `<button type="button" data-vote="${i}"><b>${esc(data.names[o.by] || o.by)}: ${esc(o.label)}</b><span>실제 발언: ${esc(o.say)}</span></button>`).join('');
     votePanel.querySelectorAll('[data-vote]').forEach((b) => {
@@ -192,6 +216,7 @@ function renderSide() {
         catch (e) { error(e.message); await load(); }
       };
     });
+    }
   }
   const next = JSON.stringify(data.log);
   if (next === logKey) return;

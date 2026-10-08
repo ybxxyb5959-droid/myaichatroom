@@ -37,6 +37,7 @@ function autosize() {
   $('#guestSend').disabled = sending || !input.value.trim();
 }
 function render(state) {
+  $('#guestPeople').textContent = (state.participants || []).map(p => `${p.online ? '●' : '○'} ${p.name}`).join(' · ');
   $('#roomTitle').textContent = $('#sideRoomTitle').textContent = state.roomName;
   $('#guestName').textContent = state.name;
   $('#guestInitial').textContent = [...state.name][0] || '나';
@@ -137,11 +138,13 @@ $('#themeBtn').onclick = () => {
   localStorage.setItem('chatroom-theme', theme);
 };
 const theme = localStorage.getItem('chatroom-theme');
+addEventListener('room-reconnect', () => refresh().catch(error => { $('#guestError').textContent = error.message; }));
 if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
 try {
   if (await refresh()) {
     events = new EventSource('/events');
     events.addEventListener('state', event => render(JSON.parse(event.data)));
+    events.addEventListener('house', () => dispatchEvent(new Event('house-update')));
     events.onerror = () => {
       $('#guestConnection').textContent = '연결을 다시 확인하고 있어요…';
       refresh().catch(error => { $('#guestError').textContent = error.message; });

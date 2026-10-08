@@ -7,12 +7,14 @@ import { UsageMonitor } from '../lib/usage.mjs';
 import { isLocalNavigation, isExternalWebLink } from './policy.mjs';
 
 const smoke = process.argv.includes('--smoke-test');
+if (smoke && process.env.CHATROOM_HOME) app.setPath('userData', path.join(process.env.CHATROOM_HOME, 'electron-profile'));
 let backend;
 let window;
 let stopping = false;
+const smokeTargets = {};
 
 async function launch() {
-  const root = process.env.CHATROOM_HOME || path.join(app.getPath('userData'), 'room');
+  const root = process.env.CHATROOM_HOME || path.join(app.getPath('appData'), 'AI 단톡방', 'room');
   fs.mkdirSync(root, { recursive: true });
   const cfg = loadConfig(process.env.CHATROOM_CONFIG || path.join(root, 'config.json'));
   // The packaged smoke check must never sign in, query usage or invoke a real AI.
@@ -25,7 +27,11 @@ async function launch() {
       });
       return selected.canceled ? null : selected.filePaths[0];
     },
-    usage: smoke ? null : new UsageMonitor(root, adapter.bins), greetings: !smoke });
+    usage: smoke ? null : new UsageMonitor(root, adapter.bins), greetings: !smoke,
+    ...(smoke ? {
+      tailscaleFunnel: async target => { smokeTargets.guest = target; return { url: 'https://smoke.example.ts.net:8443', public: true, stop: async () => {} }; },
+      tailscaleServe: async target => { smokeTargets.owner = target; return { url: 'https://smoke.example.ts.net:8444', public: false, stop: async () => {} }; },
+    } : {}) });
   await new Promise((resolve, reject) => {
     backend.server.once('error', reject);
     backend.server.listen(0, '127.0.0.1', resolve);
@@ -40,6 +46,7 @@ async function launch() {
   };
   window = new BrowserWindow({
     title: 'AI 단톡방',
+    icon: path.join(import.meta.dirname, '../public/icon-512.png'),
     width: 1320,
     height: 900,
     minWidth: 760,
@@ -124,6 +131,10 @@ async function launch() {
       throw new Error('새 채팅방 도트 화면 확인 실패: ' + JSON.stringify(emptyScreen));
     console.log('EMPTY_SCREEN_SMOKE ' + JSON.stringify(emptyScreen));
     const sharingScreen = await window.webContents.executeJavaScript(`(async () => {
+      const loaded = Date.now() + 5000;
+      while (!document.querySelector('.share-dialog [data-usage]') && Date.now() < loaded)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      if (!document.querySelector('.share-dialog [data-usage]')) throw new Error('공유 화면 모듈이 로드되지 않았습니다.');
       document.querySelector('#shareBtn').click();
       const deadline = Date.now() + 5000;
       while (!document.querySelector('[data-usage]').textContent && Date.now() < deadline)
@@ -141,11 +152,39 @@ async function launch() {
       result.worker = !!registration.active;
       return result;
     })()`);
-    if (!sharingScreen.open || !sharingScreen.fits || sharingScreen.usage !== '오늘 0/15회 사용'
-      || sharingScreen.ownerQR !== '내 폰 연결 QR 만들기' || sharingScreen.friendQR !== '친구 초대 QR 만들기'
-      || sharingScreen.defaultLimit !== '15' || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
+    if (!sharingScreen.open || !sharingScreen.fits || !sharingScreen.usage.startsWith('오늘 공용 0/100회 사용')
+      || sharingScreen.ownerQR !== '내 폰 연결 QR 만들기' || sharingScreen.friendQR !== '새 친구 초대 링크 만들기'
+      || sharingScreen.defaultLimit !== '100' || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
       throw new Error('공유 메뉴·PWA 확인 실패: ' + JSON.stringify(sharingScreen));
     console.log('SHARING_SCREEN_SMOKE ' + JSON.stringify(sharingScreen));
+    const localRequest = async (route, body) => {
+      const res = await fetch(origin + route, body === undefined ? {} : { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error(`데스크톱 공유 API 실패: ${route} (${res.status})`);
+      return res.json();
+    };
+    const remoteRequest = async (role, route, body, cookie) => {
+      const remoteOrigin = `https://smoke.example.ts.net:${role === 'owner' ? 8444 : 8443}`;
+      const res = await fetch(smokeTargets[role] + route, { method: body === undefined ? 'GET' : 'POST', headers: { Host: new URL(remoteOrigin).host, Origin: remoteOrigin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const text = await res.text(); let data; try { data = JSON.parse(text); } catch { data = text; }
+      return { status: res.status, data, cookie: res.headers.get('set-cookie')?.split(';')[0] };
+    };
+    await localRequest('/api/share/connect', { public: false });
+    const ownerInvite = await localRequest('/api/share/invite', { role: 'owner' });
+    const ownerToken = new URLSearchParams(new URL(ownerInvite.link).hash.slice(1)).get('token');
+    const pending = await remoteRequest('owner', '/api/share/redeem', { token: ownerToken });
+    if (pending.status !== 202 || pending.cookie) throw new Error('PC 승인 전 방장 인증이 발급됨');
+    const requests = await localRequest('/api/share/pairing');
+    await localRequest('/api/share/pairing', { id: requests.requests[0].id, approve: true });
+    const paired = await remoteRequest('owner', '/api/share/pair-status', { token: ownerToken, challenge: pending.data.challenge });
+    if (paired.status !== 200 || (await remoteRequest('owner','/api/state',undefined,paired.cookie)).status !== 200) throw new Error('방장 폰 페어링 실패');
+    const friendInvite = await localRequest('/api/share/invite', { role: 'guest' });
+    const friendToken = new URLSearchParams(new URL(friendInvite.link).hash.slice(1)).get('token');
+    const joined = await remoteRequest('guest','/api/share/redeem',{token:friendToken,name:'스모크 친구'});
+    if (joined.status !== 200 || (await remoteRequest('guest','/api/house',undefined,joined.cookie)).status !== 200
+      || (await remoteRequest('guest','/api/gallery',undefined,joined.cookie)).status !== 200
+      || (await remoteRequest('guest','/api/tasks',undefined,joined.cookie)).status !== 403
+      || (await remoteRequest('guest','/api/share',undefined,paired.cookie)).status !== 403) throw new Error('친구 초대 또는 권한 분리 실패');
+    console.log('PAIRING_INVITE_SMOKE ' + JSON.stringify({ ownerPairing:true,guestJoin:true,house:true,gallery:true,adminBlocked:true,mockedTailscale:true }));
     const ui = await window.webContents.executeJavaScript(`({
       input: document.querySelector('#input')?.placeholder,
       node: typeof require,
@@ -159,8 +198,11 @@ async function launch() {
       || !prefs.sandbox || !prefs.contextIsolation || prefs.nodeIntegration || state.members.length !== 3) {
       throw new Error('데스크톱 실행 또는 렌더러 격리 확인에 실패했습니다.');
     }
-    console.log('DESKTOP_SMOKE ' + JSON.stringify({ ok: true, packaged: app.isPackaged, title: ui.title,
-      input: ui.input, sandbox: prefs.sandbox, members: state.members.length }));
+    const receipt = { ok: true, packaged: app.isPackaged, title: ui.title,
+      input: ui.input, sandbox: prefs.sandbox, members: state.members.length,
+      sharing: { ownerPairing:true,guestJoin:true,house:true,gallery:true,adminBlocked:true,mockedTailscale:true } };
+    console.log('DESKTOP_SMOKE ' + JSON.stringify(receipt));
+    if (process.env.CHATROOM_SMOKE_RECEIPT) fs.writeFileSync(process.env.CHATROOM_SMOKE_RECEIPT, JSON.stringify(receipt));
     app.quit();
   } else {
     window.show();

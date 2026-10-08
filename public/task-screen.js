@@ -970,6 +970,25 @@ toggle.onclick = () => {
   else if (projectId && !busy) change({ action: 'folder.check', projectId });
   refreshAI();
 };
+let continuingChat = false;
+window.addEventListener('task-continue', async event => {
+  if (document.body.dataset.role === 'guest' || typeof event.detail?.text !== 'string') return;
+  if (continuingChat || busy || analysisActive()) { status.textContent = '진행 중인 작업이 끝난 뒤 이어해 주세요.'; return; }
+  continuingChat = true;
+  try {
+    if (!data) await load();
+    if (!data || busy) { showTask(true); return; }
+    await flushDraft();
+    busy = true; controls();
+    data = await request(project() ? { action: 'session.create', projectId } : { action: 'project.create', name: '채팅에서 이어하기' });
+    projectId = data.selectedProjectId; sessionId = data.selectedSessionId;
+    render(true); showTask(true);
+    input.value = event.detail.text; input.style.height = 'auto';
+    input.style.height = `${Math.min(220, input.scrollHeight)}px`;
+    await flushDraft(); input.focus();
+  } catch (error) { errorStatus(error); }
+  finally { continuingChat = false; busy = false; controls(); }
+});
 back.onclick = async () => {
   if (busy) return;
   busy = true; controls();
