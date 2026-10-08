@@ -1,5 +1,5 @@
 import * as THREE from '/vendor/three.module.js';
-import { houseBounds, furnitureParts } from './house-view.mjs';
+import { houseBounds, furnitureParts, roomAt, workerPath, actorActivity } from './house-view.mjs';
 import { createBlockAvatar, animateBlockAvatar } from './house-avatar.mjs';
 import { furniturePose } from './house-pose.mjs';
 
@@ -36,6 +36,8 @@ export class HouseScene {
     this.scene.add(this.structure, this.people);
     this.camera = new THREE.PerspectiveCamera(45, 1, .1, 150);
     this.agents = {};
+    this.seenSpeech = null; this.previousItems = new Map();
+    this.reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
     this.shown = null; this.jobs = []; this.pending = new Map(); // build animation: what is already in place, who is building what
     this.angle = Math.PI / 4; this.elevation = .85; this.zoom = 1; this.follow = null;
     this.pan = new THREE.Vector3();
@@ -93,7 +95,8 @@ export class HouseScene {
         ...data.walls.map(([x, z, c, door]) => [`w${x},${z},${c},${door}`, data.palette[c], [['box', x, door ? 1.7 : 0, z, 1, door ? .6 : 2.3, 1, data.palette[c]]]]),
         ...data.items.map((item) => {
           const parts = furnitureParts({ defs: data.defs, items: [item] });
-          return [`i${item.def}@${item.x},${item.z}/${item.rot}`, data.palette[parts[0]?.c], parts.map((p) => [p.s, p.x, p.y, p.z, p.w, p.h, p.d, data.palette[p.c]])];
+          return [`i${item.id}@${item.x},${item.z}/${item.rot}/${JSON.stringify(parts)}`, data.palette[parts[0]?.c],
+            parts.map((p) => [p.s, p.x, p.y, p.z, p.w, p.h, p.d, data.palette[p.c]]), item];
         }),
       ];
       this.planBuilds(data, cells);
@@ -102,37 +105,84 @@ export class HouseScene {
         const meshes = parts.map((p) => this.mesh(...p));
         if (this.shown.has(cellKey)) continue;
         // New work stays hidden until its builder has walked over and put it in place.
-        meshes.forEach((m) => { m.visible = false; m.userData.base = m.scale.clone(); });
+        meshes.forEach((m) => { m.visible = false; m.userData.base = m.scale.clone(); m.userData.position = m.position.clone(); });
         this.pending.set(cellKey, meshes);
       }
+      this.previousItems = new Map(data.items.map((item) => [item.id, { ...item }]));
     }
     const actors = { ...data.agents, ...(data.player ? { user: data.player } : {}) };
     for (const id of Object.keys(this.agents)) if (!actors[id]) {
       this.people.remove(this.agents[id].group); dispose(this.agents[id].group); delete this.agents[id];
+      if (this.follow === id) { this.follow = null; this.canvas.dispatchEvent(new Event('house-follow-change')); }
     }
     for (const [id, to] of Object.entries(actors)) {
       if (!this.agents[id]) {
-        const rig = createBlockAvatar(THREE, this.mesh.bind(this), COLORS[id] || '#777');
+        const rig = createBlockAvatar(THREE, this.mesh.bind(this), COLORS[id] || '#777', id);
         const { group } = rig;
-        if (id !== 'user') {
-        const texture = new THREE.TextureLoader().load(`/avatars/${id}-pixel-128.png`);
-        texture.colorSpace = THREE.SRGBColorSpace;
-        const badge = new THREE.Mesh(new THREE.PlaneGeometry(.38, .38), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
-        badge.position.set(0, 1.04, .185); rig.body.add(badge);
-        }
         group.position.set(to.x + .5, 0, to.z + .5);
         this.people.add(group); this.agents[id] = { group, rig };
       }
       const actor = this.agents[id];
+      if (to.spawn !== undefined && actor.spawn !== to.spawn) {
+        actor.group.position.set(to.x + .5, 0, to.z + .5); actor.spawn = to.spawn;
+      }
       actor.to = to;
-      const building = this.jobs.some((j) => j.actor === id && j.phase !== 'reveal');
-      const text = [id === 'user' ? data.userName : data.names[id] || id, building ? '🔨 작업 중' : '', data.phase === 'life' ? to.doing : ''].filter(Boolean).join(' · ');
+      const job = this.jobs.find((j) => j.actor === id);
+      const action = actorActivity({ job, working: data.workingActor === id,
+        moving: actor.group.position.distanceTo(new THREE.Vector3(to.x + .5, 0, to.z + .5)) > .2,
+        doing: data.crew?.waiting && data.crew.soloActor === id ? '동료 복귀 대기' : to.doing,
+        paused: id !== 'user' && data.talk === false });
+      actor.action = action;
+      const text = [id === 'user' ? data.userName : data.names[id] || id, action].filter(Boolean).join(' · ');
       if (text !== actor.text) {
         if (actor.label) { actor.group.remove(actor.label); actor.label.material.map.dispose(); actor.label.material.dispose(); }
         actor.label = this.label(text, COLORS[id] || '#555', 2.4, id === 'user' ? '' : id);
         actor.label.position.y = 2.75; actor.group.add(actor.label); actor.text = text;
       }
     }
+    if (!this.jobs.length) this.latestCompletion = data.log.findLast((l) => l.kind === 'build') || null;
+    const speech = data.log.filter((l) => l.source === 'ai' && l.kind === 'say' && l.speechId);
+    if (this.seenSpeech) for (const message of speech) {
+      if (this.seenSpeech.has(message.speechId) || Date.now() - message.at > 30000) continue;
+      const actor = this.agents[message.id];
+      if (!actor) continue;
+      if (actor.bubble) { actor.group.remove(actor.bubble); actor.bubble.material.map.dispose(); actor.bubble.material.dispose(); }
+      actor.bubble = this.speechBubble(message.text);
+      actor.bubble.position.y = 4.05; actor.group.add(actor.bubble);
+      actor.bubbleUntil = performance.now() + 12000;
+    }
+    this.seenSpeech = new Set(speech.map((l) => l.speechId));
+  }
+
+  speechBubble(text) {
+    const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fffdf4'; ctx.beginPath(); ctx.roundRect(4, 4, 632, 230, 24); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(295, 228); ctx.lineTo(320, 256); ctx.lineTo(345, 228); ctx.fill();
+    ctx.fillStyle = '#1b2638'; ctx.font = '26px sans-serif';
+    const lines = []; let line = '';
+    for (const char of String(text).slice(0, 200)) {
+      if (ctx.measureText(line + char).width > 574) { lines.push(line); line = ''; }
+      line += char;
+    }
+    if (line) lines.push(line);
+    lines.slice(0, 5).forEach((value, i) => ctx.fillText(value + (i === 4 && lines.length > 5 ? '…' : ''), 30, 44 + i * 37));
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+    sprite.scale.set(4.8, 1.92, 1);
+    return sprite;
+  }
+
+  pickRoom(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect(), ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), this.camera);
+    const point = ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), new THREE.Vector3());
+    return point ? roomAt(this.data?.progress?.rooms || [], point.x, point.z) : -1;
+  }
+
+  releaseJob(job) {
+    if (!job.held) return;
+    job.held.parent?.remove(job.held); job.held.geometry.dispose(); job.held.material.dispose(); job.held = null;
   }
 
   // Work that is new since the last drawing is given to the member who built last: they carry the material over,
@@ -141,14 +191,22 @@ export class HouseScene {
     const current = new Set(cells.map(([cellKey]) => cellKey));
     if (!this.shown) { this.shown = new Set(current); return; }
     for (const cellKey of this.shown) if (!current.has(cellKey)) this.shown.delete(cellKey);
-    for (const job of this.jobs) job.keys = job.keys.filter((cellKey) => current.has(cellKey));
+    for (const job of this.jobs) {
+      job.keys = job.keys.filter((cellKey) => current.has(cellKey));
+      if (!job.keys.length) this.releaseJob(job);
+    }
     this.jobs = this.jobs.filter((job) => job.keys.length);
     const queued = new Set(this.jobs.flatMap((job) => job.keys));
     const fresh = cells.filter(([cellKey]) => !this.shown.has(cellKey) && !queued.has(cellKey));
     const builder = data.log.findLast((l) => l.kind === 'build')?.id;
     if (!fresh.length) return;
-    if (!builder || fresh.length > 400) { fresh.forEach(([cellKey]) => this.shown.add(cellKey)); return; }
-    this.jobs.push({ actor: builder, keys: fresh.map(([cellKey]) => cellKey), color: fresh[0][1], phase: 'walk', t: 0 });
+    if (!builder || fresh.length > 400 || this.reducedMotion) { fresh.forEach(([cellKey]) => this.shown.add(cellKey)); return; }
+    const structure = fresh.filter((entry) => !entry[3]);
+    if (structure.length) this.jobs.push({ actor: builder, keys: structure.map(([cellKey]) => cellKey), color: structure[0][1], phase: 'walk', t: 0 });
+    for (const [cellKey, color, , item] of fresh.filter((entry) => entry[3])) {
+      this.jobs.push({ actor: item.lastBy || item.by || builder, keys: [cellKey], color, item,
+        previous: this.previousItems.get(item.id), phase: 'walk', t: 0 });
+    }
   }
 
   // One step of every build job (one job at a time per member): walk -> hammer ~1.5s -> cells pop in one by one.
@@ -167,26 +225,46 @@ export class HouseScene {
           job.held = new THREE.Mesh(new THREE.BoxGeometry(.22, .22, .22), new THREE.MeshStandardMaterial({ color: job.color || '#c9a26b', roughness: .8 }));
           job.held.position.set(0, -.3, .26); actor.rig.joints.rightElbow.add(job.held);
         }
-        const target = new THREE.Vector3(actor.to.x + .5, 0, actor.to.z + .5);
-        if (actor.group.position.distanceTo(target) < .6 || job.t > 6) { job.phase = 'hammer'; job.t = 0; }
+        if (!job.path) job.path = workerPath(this.data, actor.group.position,
+          job.item ? { x: job.item.x + .5, z: job.item.z + .5 } : { x: actor.to.x + .5, z: actor.to.z + .5 });
+        const next = job.path[0];
+        if (next) {
+          const target = new THREE.Vector3(next.x, 0, next.z), distance = actor.group.position.distanceTo(target);
+          actor.group.rotation.y = Math.atan2(target.x - actor.group.position.x, target.z - actor.group.position.z);
+          actor.group.position.lerp(target, Math.min(1, dt * 4 / Math.max(.001, distance)));
+          if (distance < .08) job.path.shift();
+        } else { job.phase = 'hammer'; job.t = 0; }
       } else if (job.phase === 'hammer') {
         actor.rig.joints.rightShoulder.rotation.x = -1.3 + Math.sin(job.t * 16) * .55;
         actor.rig.joints.rightElbow.rotation.x = -.5;
         if (job.t > 1.5) { job.phase = 'reveal'; job.t = 0; }
       }
       if (job.phase === 'reveal') {
-        if (job.held) { job.held.parent?.remove(job.held); job.held.geometry.dispose(); job.held.material.dispose(); job.held = null; }
+        this.releaseJob(job);
         const stagger = Math.min(.06, 1.2 / job.keys.length);
         let done = 0;
         job.keys.forEach((cellKey, i) => {
-          const p = (job.t - i * stagger) / .25;
+          const p = (job.t - i * stagger) / (job.item ? .9 : .25);
           if (p <= 0) return;
           this.shown.add(cellKey);
           const k = Math.min(p, 1), pop = 1 + 2.7 * (k - 1) ** 3 + 1.7 * (k - 1) ** 2; // overshoots a little, then settles
-          for (const m of this.pending.get(cellKey) || []) { m.visible = true; m.scale.copy(m.userData.base).multiplyScalar(pop); }
+          for (const m of this.pending.get(cellKey) || []) {
+            m.visible = true; m.scale.copy(m.userData.base).multiplyScalar(job.previous ? 1 : pop);
+            m.position.copy(m.userData.position);
+            if (job.item) {
+              m.position.y += Math.sin(k * Math.PI) * .5;
+              if (job.previous) {
+                m.position.x += (job.previous.x - job.item.x) * (1 - k);
+                m.position.z += (job.previous.z - job.item.z) * (1 - k);
+              }
+            }
+          }
           if (p >= 1) done++;
         });
-        if (done === job.keys.length) { job.keys.forEach((cellKey) => this.pending.delete(cellKey)); this.jobs.splice(this.jobs.indexOf(job), 1); changed = true; }
+        if (done === job.keys.length) {
+          this.latestCompletion = { id: job.actor, text: `${job.item?.def || '구조물'} ${job.previous ? '이동' : '설치'} 완료` };
+          job.keys.forEach((cellKey) => this.pending.delete(cellKey)); this.jobs.splice(this.jobs.indexOf(job), 1); changed = true;
+        }
       }
       if (job.phase !== phase) changed = true;
     }
@@ -222,10 +300,17 @@ export class HouseScene {
   }
   render(now) {
     if (!this.data || this.lost) return;
+    if (!this.statusAt || now - this.statusAt > 1000) { this.statusAt = now; this.update(this.data); }
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     if (!w || !h) return;
     const dt = Math.min(.1, (now - (this.last || now)) / 1000); this.last = now;
-    for (const { group, to, rig } of Object.values(this.agents)) {
+    for (const [id, actor] of Object.entries(this.agents)) {
+      const { group, to, rig } = actor;
+      if (actor.bubble && now >= actor.bubbleUntil) {
+        group.remove(actor.bubble); actor.bubble.material.map.dispose(); actor.bubble.material.dispose(); actor.bubble = null;
+      }
+      const job = this.jobs.find((j) => j.actor === id);
+      if (job) { animateBlockAvatar(rig, now / 1000, job.phase === 'walk'); continue; }
       const placement = furniturePose(this.data, to);
       const target = placement ? new THREE.Vector3(placement.x, placement.y, placement.z) : new THREE.Vector3(to.x + .5, 0, to.z + .5);
       const distance = group.position.distanceTo(target);

@@ -52,9 +52,9 @@ test('@mentions accelerate the named member but do not exclude the others', asyn
   const s = await roomFixture(t);
   await s.start(); await s.send('@Claude 안녕'); await s.advance();
   await s.advance(2000);
-  assert.deepEqual(s.calls.map((c) => c.id), ['claude']);
+  assert.deepEqual(s.calls.filter((c) => !c.options.independent).map((c) => c.id), ['claude']);
   await s.advance(6000);
-  assert.deepEqual(s.calls.map((c) => c.id).sort(), [...IDS].sort());
+  assert.deepEqual(s.calls.filter((c) => !c.options.independent).map((c) => c.id).sort(), [...IDS].sort());
 });
 
 test('unread messages schedule from the reading tick, exactly as upstream, not from an old message timestamp', async (t) => {

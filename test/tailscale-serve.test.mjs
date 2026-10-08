@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startTailscaleServe } from '../lib/tailscale-serve.mjs';
+import { startTailscaleServe, startTailscaleFunnel } from '../lib/tailscale-serve.mjs';
 
 test('Serve owns only HTTPS 8443, verifies the private target and stops only its own mapping', async () => {
   const calls = [], target = 'http://127.0.0.1:43210', endpoint = 'pc.example.ts.net:8443';
@@ -41,4 +41,41 @@ test('Serve refuses missing login, pre-existing mappings, invalid targets and pu
     return { stdout: '' };
   } }), /確認|확인/);
   assert.equal(disabled, true);
+});
+
+test('Funnel is explicit, verifies the public flag, and never replaces another route', async () => {
+  const target = 'http://127.0.0.1:43210', endpoint = 'pc.example.ts.net:8443', calls = [];
+  let config = {};
+  const execute = async (_bin, args) => {
+    calls.push(args);
+    if (args[0] === 'status') return { stdout: '{"BackendState":"Running","Self":{"DNSName":"pc.example.ts.net."}}' };
+    if (args[1] === 'status') return { stdout: JSON.stringify(config) };
+    if (args.includes('--bg')) config = {
+      TCP: { 8443: { HTTPS: true } }, Web: { [endpoint]: { Handlers: { '/': { Proxy: target } } } },
+      AllowFunnel: { [endpoint]: true },
+    };
+    if (args.includes('off')) config = {};
+    return { stdout: '' };
+  };
+  const service = await startTailscaleFunnel(target, { execute });
+  assert.equal(service.public, true);
+  assert.deepEqual(calls[2], ['funnel', '--bg', '--https=8443', target]);
+  await assert.rejects(startTailscaleFunnel(target, { execute }), /덮어쓰지/);
+  config.Web[endpoint].Handlers['/'].Proxy = 'http://127.0.0.1:43211';
+  await service.stop();
+  assert.ok(config.AllowFunnel[endpoint], 'another target is left alone');
+  config.Web[endpoint].Handlers['/'].Proxy = target;
+  await service.stop(); assert.deepEqual(config, {});
+});
+
+test('a Funnel approval URL is returned to the owner without silently enabling a private fallback', async () => {
+  const calls = [];
+  await assert.rejects(startTailscaleFunnel('http://127.0.0.1:43210', { execute: async (_bin, args) => {
+    calls.push(args);
+    if (args[0] === 'status') return { stdout: '{"BackendState":"Running","Self":{"DNSName":"pc.example.ts.net."}}' };
+    if (args[1] === 'status') return { stdout: '{}' };
+    throw Object.assign(new Error('approval required'), { stderr: 'Enable Funnel: https://login.tailscale.com/f/test' });
+  } }), /계정 승인 필요: https:\/\/login.tailscale.com\/f\/test/);
+  assert.equal(calls.filter((a) => a.includes('--bg')).length, 1);
+  assert.ok(!calls.some((a) => a[0] === 'serve' && a.includes('--bg')));
 });

@@ -4,13 +4,13 @@ dialog.className = 'share-dialog';
 dialog.setAttribute('aria-label', '휴대폰 연결 및 친구 초대');
 dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria-label="닫기">✕</button></header>
 <section class="share-setup" aria-labelledby="tailscaleTitle">
-<h3 id="tailscaleTitle">먼저, Tailscale로 연결해 주세요</h3>
-<p class="share-note">PC와 폰을 안전하게 이어 주는 연결 앱이에요.</p>
+<h3 id="tailscaleTitle">링크로 친구 초대하기</h3>
+<p class="share-note">친구는 휴대폰·컴퓨터 브라우저로 입장해요. Tailscale 설치는 방장 PC에만 필요합니다.</p>
 <ol><li><a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">Tailscale 다운로드 ↗</a>에서 PC용 앱을 설치하세요.</li>
-<li>폰의 App Store 또는 Google Play에서 <strong>Tailscale</strong>을 검색해 설치하세요.</li>
-<li>두 기기에서 로그인하고 연결을 켜 주세요. 폰에 VPN 연결 허용 안내가 나오면 허용하세요.</li></ol>
-<p class="share-note">내 폰은 PC와 같은 계정으로 로그인해요. 친구는 본인 계정을 사용해요. 접속하는 동안 PC·단톡방 앱·양쪽 Tailscale을 계속 켜 두세요.</p>
-<div class="share-actions"><button data-connect>HTTPS 연결 켜기</button><button data-refresh>연결 상태 확인</button></div>
+<li>PC에서 로그인하고, 처음에는 계정의 Funnel 공개 연결을 승인해 주세요.</li>
+<li>친구 초대 링크를 보내면 친구는 이름만 입력해서 입장해요.</li></ol>
+<p class="share-note">이용 중에는 PC·단톡방 앱·PC의 Tailscale을 켜 두세요. 공개 주소는 친구용 채팅만 허용하며, 방장 설정과 작업대는 차단합니다.</p>
+<div class="share-actions"><button data-connect>선택한 방식으로 연결 켜기</button><button data-refresh>연결 상태 확인</button></div>
 <p data-status role="status"></p><p class="share-error" data-error role="alert"></p>
 </section>
 <div class="share-tabs" role="tablist" aria-label="공유 방식">
@@ -18,9 +18,9 @@ dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria
 <button type="button" id="shareGuestTab" role="tab" aria-selected="false" aria-controls="shareGuestPanel" tabindex="-1" data-tab="guest">친구 부르기</button>
 </div>
 <section id="shareOwnerPanel" class="share-panel" role="tabpanel" aria-labelledby="shareOwnerTab">
-<h3>내 폰에서도 이 방 그대로</h3>
+<h3>기존 내 폰 연결 · 비공개 전용</h3>
 <ol><li>PC와 폰의 Tailscale에 <strong>같은 계정</strong>으로 로그인하세요.</li><li>위에서 HTTPS 연결을 켜고, 아래 버튼으로 QR코드를 만드세요.</li><li>폰 카메라로 QR코드를 찍고 링크를 열어 연결하세요.</li></ol>
-<p class="share-note">내 폰에는 방장 권한이 연결돼요. 이 QR코드는 친구에게 보내지 마세요.</p>
+<p class="share-note">이 기존 방식은 폰에도 Tailscale이 필요합니다. Funnel 공개 주소에서는 방장 연결을 허용하지 않아요. 공개 연결을 먼저 끄고 사용하세요. 이 QR코드는 친구에게 보내지 마세요.</p>
 <button data-pair>내 폰 연결 QR 만들기</button>
 <section data-result="owner" class="share-result" hidden></section>
 <div class="share-home"><h3>폰 홈 화면에 추가하기</h3>
@@ -33,16 +33,16 @@ dialog.innerHTML = `<header><h2>공유</h2><button type="button" data-close aria
 </section>
 <section id="shareGuestPanel" class="share-panel" role="tabpanel" aria-labelledby="shareGuestTab" hidden>
 <h3>친구와 함께 대화하기</h3>
-<ol><li>친구도 Tailscale을 설치하고 <strong>본인 계정</strong>으로 로그인해요.</li>
-<li>방장이 <a href="https://login.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Tailscale 기기 관리 ↗</a>에서 이 PC를 친구에게 공유하고 접근을 허용해 주세요. 친구는 기기 공유 초대를 수락해야 해요.</li>
-<li>아래에서 친구용 QR코드·링크를 만들어 보내 주세요. 친구가 링크를 열고 이름을 입력하면 입장해요.</li></ol>
-<p class="share-note">Tailscale 기기 공유와 단톡방 초대는 별개예요. 아래 QR코드만으로는 PC에 접근할 수 없어요. 친구에게는 방장 권한을 주지 않아요.</p>
-<button data-invite>친구 초대 QR 만들기</button>
+<ol><li>친구에게 아래 링크를 보내거나 QR코드를 보여 주세요.</li>
+<li>친구가 브라우저로 열고 이름을 입력하면 입장합니다. 별도 설치·회원가입은 필요 없어요.</li></ol>
+<p class="share-note">한 링크로 24시간 동안 최대 10명이 입장합니다. 친구는 한도 내 AI 질문과 일반 채팅만 할 수 있고 AI 활성화 설정·작업대·파일에는 접근할 수 없습니다.</p>
+<button data-invite>새 친구 초대 링크 만들기</button>
 <section data-result="guest" class="share-result" hidden></section>
 <details class="share-manage"><summary>친구 관리 · AI 사용 한도</summary>
 <h3>친구 AI 호출 한도</h3><p data-usage></p>
-<form data-limits><label>친구 전체 하루 합계 <input name="total" type="number" min="0" max="1000" required value="15"></label> <button>저장</button></form>
-<p class="share-note">친구 1명당 기본 15회, 친구 전체 합계 기본 15회입니다. 실제 AI 호출 직전에 1회 차감하며 실패·취소도 포함합니다. 자정(PC 시간)에 초기화됩니다. AI 요청을 끄면 사람끼리 대화는 계속할 수 있습니다.</p>
+<form data-limits><label>친구 공용 하루 AI 호출 <input name="total" type="number" min="0" max="1000" required value="100"></label> <button>저장</button></form>
+<p class="share-note">기본 공용 100회. 입장 권한이 있는 친구끼리 남은 한도를 균등 배분합니다. 친구 추가·내보내기·한도 변경 시 남은 몫만 다시 나누며 이미 쓴 횟수는 유지합니다. 브라우저를 닫거나 다시 열어도 초기화되지 않습니다. 자정(PC 시간)에 새로 배분합니다.</p>
+<p class="share-note">Talk가 켜져 있으면 친구의 일반 대화에도 AI가 자동 반응합니다. 실제 호출 직전에 1회 차감하며 실패·취소도 포함합니다. 한도 소진 후에도 일반 채팅은 가능합니다. 개인 상한은 빈칸이면 자동 배분, 0이면 그 친구의 AI 응답만 중지합니다.</p>
 <h3>친구 관리</h3><ul class="share-list" data-guests></ul>
 <h3>대기 중인 친구 초대</h3><ul class="share-list" data-invites></ul>
 </details></section>
@@ -94,20 +94,20 @@ function row(text, label, callback) {
 }
 async function refresh() {
   const state = await request('/api/share');
-  $('[data-status]').textContent = state.url ? `연결 주소: ${state.url}` : '휴대폰 연결이 꺼져 있습니다. 먼저 HTTPS 연결을 켜 주세요.';
-  $('[data-usage]').textContent = `오늘 ${state.usage.total}/${state.usage.limit}회 사용`;
+  $('[data-status]').textContent = state.url ? `${state.public ? '친구용 공개' : '기존 비공개'} 연결: ${state.url}` : '공유 연결이 꺼져 있습니다.';
+  $('[data-usage]').textContent = `오늘 공용 ${state.usage.total}/${state.usage.limit}회 사용 · 친구 ${state.usage.participants}명`;
   $('[name=total]').value = state.usage.limit;
   $('[data-guests]').replaceChildren(...state.guests.map(guest => {
-    const li = row(`${guest.name} · ${guest.usage.used}/${guest.limit}회`, '내보내기', async () => {
+    const li = row(`${guest.name} · 사용 ${guest.usage.used}회 · 배정 잔여 ${guest.usage.remaining}회`, '내보내기', async () => {
       if (!confirm(`${guest.name}님의 입장 권한을 해제할까요?`)) return;
       await request('/api/share/revoke-guest', { id: guest.id }); await refresh();
     });
     const form = document.createElement('form'), input = document.createElement('input'), save = document.createElement('button');
-    input.type = 'number'; input.min = '0'; input.max = '1000'; input.value = guest.limit; input.setAttribute('aria-label', `${guest.name} 하루 호출 한도`);
+    input.type = 'number'; input.min = '0'; input.max = '1000'; input.value = guest.limit ?? ''; input.placeholder = '자동'; input.setAttribute('aria-label', `${guest.name} 개인 상한 (빈칸은 자동 배분)`);
     save.textContent = '한도 저장';
     form.append(input, save); form.onsubmit = event => {
       event.preventDefault();
-      action(async () => { await request('/api/share/limits', { guestId: guest.id, limit: Number(input.value) }); await refresh(); });
+      action(async () => { await request('/api/share/limits', { guestId: guest.id, limit: input.value === '' ? null : Number(input.value) }); await refresh(); });
     };
     li.append(form); return li;
   }));
@@ -117,7 +117,7 @@ async function refresh() {
       box.replaceChildren(); box.hidden = true;
     }
     $(role === 'owner' ? '[data-owner-invites]' : '[data-invites]').replaceChildren(...state.invites.filter(invite => invite.role === role).map(invite => row(
-      `${role === 'owner' ? '내 휴대폰' : '친구'} · ${new Date(invite.exp).toLocaleString()}까지`, '취소',
+      `${role === 'owner' ? '내 휴대폰' : '친구'} · ${invite.uses || 0}/${invite.maxUses || 1}명 · ${new Date(invite.exp).toLocaleString()}까지`, '취소',
       async () => { await request('/api/share/revoke-invite', { id: invite.id }); await refresh(); })));
   }
   $('[data-devices]').replaceChildren(...state.devices.map(device => row(
@@ -125,13 +125,15 @@ async function refresh() {
     async () => { if (confirm('이 기기의 로그인 권한을 해제할까요?')) { await request('/api/share/revoke-device', { id: device.id }); await refresh(); } })));
 }
 async function createInvite(role) {
-  const result = await request('/api/share/invite', { role });
+  const connection = await request('/api/share/connect', { public: role === 'guest' });
+  if (role === 'guest' && connection.public !== true) throw new Error('새 공개 연결 기능을 사용하려면 PC 앱을 완전히 종료한 뒤 다시 실행해 주세요.');
+  const result = await request('/api/share/invite', { role, maxUses: role === 'guest' ? 10 : 1 });
   const box = $(`[data-result="${role}"]`);
   box.dataset.inviteId = result.id;
   box.replaceChildren();
   const title = document.createElement('h3'), note = document.createElement('p'), image = document.createElement('img');
   title.textContent = role === 'owner' ? '내 휴대폰 전용 · 방장 권한' : '친구 초대 · 이름 입력 후 입장';
-  note.textContent = `${new Date(result.exp).toLocaleString()}까지 1회 사용 가능. ${role === 'owner' ? '이 QR은 친구에게 보내지 마세요.' : '이 링크를 먼저 사용하는 사람이 입장합니다. 친구에게만 전달하세요.'}`;
+  note.textContent = `${new Date(result.exp).toLocaleString()}까지 최대 ${result.maxUses || 1}명. ${role === 'owner' ? '이 QR은 친구에게 보내지 마세요.' : '링크를 아는 사람이 입장할 수 있으니 친구에게만 전달하세요.'}`;
   image.src = result.qr; image.alt = title.textContent;
   const link = document.createElement('input'); link.readOnly = true; link.value = result.link; link.setAttribute('aria-label', '초대 링크');
   const copy = document.createElement('button'); copy.textContent = '링크 복사';
@@ -142,11 +144,19 @@ async function createInvite(role) {
   box.append(title, note, image, link, copy); box.hidden = false;
   await refresh();
 }
-button.onclick = () => { if (!dialog.open) dialog.showModal(); action(refresh); };
+selectTab('guest');
+button.onclick = () => {
+  if (dialog.open) return;
+  dialog.showModal(); selectTab('guest');
+  action(async () => { await refresh(); await createInvite('guest'); });
+};
 $('[data-close]').onclick = () => dialog.close();
 dialog.addEventListener('close', clearResults);
 $('[data-refresh]').onclick = () => action(refresh);
-$('[data-connect]').onclick = () => action(async () => { $('[data-status]').textContent = 'Tailscale HTTPS 연결 확인 중…'; await request('/api/share/connect', {}); await refresh(); });
+$('[data-connect]').onclick = () => action(async () => {
+  $('[data-status]').textContent = 'Tailscale 연결 확인 중…';
+  await request('/api/share/connect', { public: $('#shareGuestTab').getAttribute('aria-selected') === 'true' }); await refresh();
+});
 $('[data-pair]').onclick = () => action(() => createInvite('owner'));
 $('[data-invite]').onclick = () => action(() => createInvite('guest'));
 $('[data-disconnect]').onclick = () => action(async () => {

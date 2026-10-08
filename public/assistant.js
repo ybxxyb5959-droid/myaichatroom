@@ -38,7 +38,7 @@ const TOUR = [
   { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 사용자 메시지와 동료의 말에 각자 반응해요. 최대 3개의 호출이 동시에 진행돼요. 끄면 진행 중인 일반 대화도 중단해요.' },
   { sel: '#boostSeg', side: true, title: '⚡ 진심모드', text: '복잡한 요청은 더 강한 모델로 생각해요. 자동·부를 때만·끔을 선택할 수 있어요. 대화 속도는 바뀌지 않아요.' },
   { sel: '#meEdit', side: true, title: '이름 바꾸기', text: 'AI들은 내 이름을 기억해요.' },
-  { sel: '#webSearchField', side: true, title: '인터넷 검색', text: 'AI가 인터넷에서 찾아보고 답해요. 모든 AI가 지원하는 건 아니니, 켠 뒤 나오는 안내를 확인하세요.' },
+  { sel: '#webSearchField', title: '인터넷 검색', text: 'AI가 인터넷에서 찾아보고 답해요. 모든 AI가 지원하는 건 아니니, 켠 뒤 나오는 안내를 확인하세요.' },
   { sel: '#guideButtons', side: true, title: '설정은 언제든 다시', text: 'AI 연결과 모델 설정, 사용법은 여기서 언제든 다시 열 수 있어요.' },
 ];
 
@@ -440,6 +440,7 @@ function renderControls() {
   $('#meAv').textContent = [...(room.userName || '방장')][0];
   document.title = room.name || 'AI 단톡방';
   $('#webSearch').checked = room.webSearch;
+  $('#webSearchField').classList.toggle('on', room.webSearch);
   $('#webHint').hidden = !room.webSearch; // the note about search support only matters once it is on
   $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요' : '채팅을 입력하세요.';
   renderRoomSub();
@@ -1062,20 +1063,8 @@ async function attach(file) {
 // ---------- events ----------
 // Reuse the workbench's original dot pets and staggered wave on the empty chat screen.
 $('#emptyCharacters').innerHTML = dotCharacters.map((rows, i) => `<div class="empty-character" style="--index:${i}">${dotCharacter(i)}</div>`).join('');
-const dotTitle = $('#emptyDotTitle'), dotContext = dotTitle.getContext('2d');
-const dotSource = document.createElement('canvas');
-dotSource.width = dotTitle.width; dotSource.height = dotTitle.height;
-const dotSourceContext = dotSource.getContext('2d');
-dotSourceContext.font = 'bold 23px "Malgun Gothic", sans-serif';
-dotSourceContext.textAlign = 'center';
-dotSourceContext.fillText(dotTitle.getAttribute('aria-label'), 170, 29);
-const dotPixels = dotSourceContext.getImageData(0, 0, 340, 40).data;
-dotContext.fillStyle = '#111';
-for (let y = 0; y < 40; y += 2) for (let x = 0; x < 340; x += 2) {
-  if (dotPixels[(y * 340 + x) * 4 + 3] > 70) {
-    dotContext.beginPath(); dotContext.arc(x, y, .72, 0, Math.PI * 2); dotContext.fill();
-  }
-}
+import { drawDotTitle } from './dot-title.mjs';
+drawDotTitle($('#emptyDotTitle'));
 $('#examples').replaceChildren(...EXAMPLES.map((x) => {
   const b = document.createElement('button');
   b.type = 'button';

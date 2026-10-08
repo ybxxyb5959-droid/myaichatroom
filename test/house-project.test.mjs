@@ -47,7 +47,7 @@ test('explicit rebuild resets house state only when saved, retains legacy loadin
   assert.equal(again.s.project, 'spacious'); assert.equal(again.s.phase, 'build');
   assert.equal(again.s.turns, 0); assert.equal(again.s.items.length, 0);
   assert.equal(again.s.mode, 'auto'); assert.deepEqual(again.s.relations, {});
-  assert.match(again.prompt('gpt'), /6개房|6개 방/);
+  assert.match(again.prompt('gpt'), /현재 작업 가능한 참가 AI 3명/);
   for (const room of PROJECT_ROOMS) assert.ok(again.prompt('gpt').includes(room.name));
 });
 
@@ -66,7 +66,7 @@ test('a spacious rebuild cannot finish as a small living room or with unfurnishe
   assert.deepEqual([status.floorMissing, status.wallMissing, status.doorMissing], [0, 0, 0]);
   assert.equal(status.passagesOpen, true);
   assert.equal(status.rooms.length, 6); assert.equal(isComplete(house), false);
-  assert.match(house.prompt('claude'), /3단계/);
+  assert.match(house.prompt('claude'), /"stage":"furniture"/);
 });
 
 test('all six rooms need furniture, essential uses and accessible passages before life starts', (t) => {
@@ -102,5 +102,5 @@ test('expanded coordinates are buildable and outside coordinates still fail', (t
   ] });
   assert.equal(result.errors.length, 1);
   assert.equal(house.view().floors.length, 16);
-  assert.match(house.prompt('gemini'), /1단계/);
+  assert.match(house.prompt('gemini'), /"stage":"floor"/);
 });

@@ -49,7 +49,7 @@ test('build turns into life by simple rules, once, and the life phase survives a
   const again = new House(file, opts);
   assert.equal(again.s.phase, 'life');
   assert.equal(again.view().floors.length, 20, 'nothing is reset');
-  assert.match(again.prompt('gpt'), /완성되어 지금은 다 같이 생활하는 중/);
+  assert.match(again.prompt('gpt'), /집에서 생활 중이다/);
   assert.deepEqual([useOf(null, '책상'), useOf(null, '책장'), useOf(null, '빈백 소파'), useOf({ use: 'plant' }, '장식'), useOf(null, '조형물')], ['desk', 'read', 'sit', 'plant', null]);
 });
 
@@ -153,7 +153,7 @@ function adapter() {
 }
 async function start(t, root, { clock, usage = null } = {}) {
   const a = adapter();
-  const app = createAssistantServer({ root, cfg: { ...loadConfig(), autoSleepMinutes: 0 }, adapter: a, usage, greetings: false,
+  const app = createAssistantServer({ root, cfg: { ...loadConfig(path.join(root, 'no-user-config.json')), autoSleepMinutes: 0 }, adapter: a, usage, greetings: false,
     clock: () => clock.t, random: seeded(3), autoTickMs: 3600000, pairDelayMs: 0 });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
@@ -190,12 +190,13 @@ test('a completed saved house resumes life while its original data is backed up'
   assert.ok(!s.app.store.messages.some((m) => /집이 기본적으로 완성됐어요/.test(m.text)));
 });
 
-test('usage display does not change ordinary participation while house life runs', async (t) => {
+test('quota exhaustion removes the member while other members continue house life', async (t) => {
   const root = homeRoot(t);
   const clock = { t: new Date(2026, 9, 7, 10).getTime() };
   const usage = { polling: false, lastPoll: Date.now(), onUpdate: () => {}, pollAll: async () => {},
     view: () => ({ claude: { ok: true, at: clock.t, windows: [{ id: '5h', usedPct: 100, remainingPct: 0 }] } }) };
   const s = await start(t, root, { clock, usage });
+  usage.onUpdate();
   await s.post('/api/check/login', {});
   await s.post('/api/room', { auto: { on: true, level: 'high' } });
   clock.t += 60000;
@@ -203,8 +204,9 @@ test('usage display does not change ordinary participation while house life runs
   clock.t += 60 * 60000; await s.app.tick();
   const talk = s.calls.filter((c) => c.auto);
   assert.ok(talk.length > 0);
-  assert.equal(s.app.room.enabled.claude, true);
-  assert.equal(s.app.room.quotaRest, undefined);
+  assert.equal(s.app.room.enabled.claude, false);
+  assert.equal(s.app.room.quotaRest.claude.autoResume, true);
+  assert.ok(s.app.store.messages.some((m) => m.kind === 'presence' && m.text === 'Claude가 잠깐 나감'));
   assert.ok(s.app.store.messages.some((m) => m.kind === 'house-event'));
 });
 

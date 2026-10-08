@@ -22,6 +22,29 @@ Leave the room on and the four of them chat, argue and build things on their own
 
 ---
 
+## Workbench
+
+Open **작업대 (Workbench)** from the chat screen. Create a project, connect a local folder, select Claude, Codex or Gemini, enter a request and consent to sending data and using the subscription. Requests, sessions and run history are saved locally. Only **solo** execution is available; collaboration and split work remain disabled as “coming soon.”
+
+You can analyze selected files, explore relevant files, draft proposals and plans, and prepare file or DOCX/PPTX/XLSX changes. Review the pending changes and give final approval before anything is written to the connected folder. Backups support restoration; disconnecting a folder never deletes its files. Attachments are copied into app data rather than moved.
+
+For long text/PDF/DOCX/PPTX/XLSX documents, attach or select the sources and choose quick, normal or thorough analysis. The app summarizes selected chunks and reports coverage; this does not mean the whole document was read. PNG crop/resize/rotation/color edits run locally without AI and produce a new pending PNG. Claude and Codex support image analysis.
+
+**Limits and usage**
+
+- Folder rename/move/delete is unsupported; operations are file-level only.
+- Scanned PDFs have no OCR and are shown as “no text”; this means no extractable text layer, not an empty document.
+- `.doc`, `.ppt`, `.xls` and `.hwp` are unsupported.
+- Gemini accepts about 24,000 characters per call and supports only `analysis` and `docs`.
+- Document extraction is not visual layout reproduction; complex original Office formatting is not guaranteed to survive.
+- PDFs are read into memory and DOCX XML entries are inflated in full. A 96MB DOCX XML benchmark peaked at about 477MB RSS; configured size limits are not performance guarantees.
+  - The workbench extractor was tested with synthetic PDFs increasing from 2,000 to 6,000, 12,000 and 19,000 pages. After removing repeated trailer searches, the 19,000-page, approximately 139MiB PDF converted in 7.79 seconds with every page and total extracted character count verified. Process peak RSS, including file generation, was about 709MiB. This verifies that fixture, not every PDF; the earlier silent exit was not reproduced and its cause remains unconfirmed.
+- Workbench Codex/Gemini calls omit `OPENAI_API_KEY`, `CODEX_API_KEY`, `GEMINI_API_KEY` and `GOOGLE_API_KEY`; subscription account login is required.
+- AI calls consume the selected subscription allowance. Gemini connection checks use one small real call; large-document summaries can use multiple calls. ChatGPT image generation/editing consumes ChatGPT subscription allowance; other image CLIs depend on their own service.
+- Claude `--resume` was not adopted because measurements did not reduce usage.
+- The Electron installer has not been built or verified for these changes; only the development Electron smoke test passed.
+  - That pass is a previous result. The latest smoke run failed because it expects the friend-invite QR label, while the current sharing menu displays a new friend-invite link label. Sharing-menu files were not changed in this work.
+
 ## Quick start
 
 1. **Download**: on the GitHub page, **Code → Download ZIP** and unzip it, or `git clone https://github.com/Moris-kr/ai-chatroom.git`

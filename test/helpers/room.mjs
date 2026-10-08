@@ -39,7 +39,9 @@ export async function roomFixture(t, options = {}) {
   let app, base;
   const launch = async () => {
     app = createAssistantServer({ root, cfg, adapter, clock: () => clock.now, random: () => .5, autoTickMs: 3600000,
-      wait: options.wait || (async () => {}), usage: options.usage, ...(options.shot ? { worldShooter: options.shot } : {}) });
+      wait: options.wait || (async () => {}), usage: options.usage, ...(options.shot ? { worldShooter: options.shot } : {}),
+      ...(options.folderPicker ? { folderPicker: options.folderPicker } : {}),
+      ...(options.taskProvider ? { taskProvider: options.taskProvider } : {}), ...(options.taskProviders ? { taskProviders: options.taskProviders } : {}) });
     await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
     base = `http://127.0.0.1:${app.server.address().port}`;
   };

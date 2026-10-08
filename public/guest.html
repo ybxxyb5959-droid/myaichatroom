@@ -1,10 +1,76 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#141820"><title>AI 단톡방</title><link rel="stylesheet" href="/share.css">
-<link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon-192.png"></head>
-<body class="phone-page"><header><h1 id="roomTitle">AI 단톡방</h1><p id="guestStatus"></p><a href="/logout">로그아웃</a></header>
-<main id="guestMessages" aria-live="polite"></main>
-<form id="guestForm" class="phone-composer"><label>메시지<textarea id="guestText" maxlength="4000" rows="2" required placeholder="친구들과 대화해 보세요."></textarea></label>
-<div><label><input type="checkbox" id="askAI"> AI에게도 답변 요청 (1회 사용)</label> <select id="guestAI" aria-label="답변할 AI"></select></div>
-<button id="guestSend">보내기</button><p id="guestError" class="share-error" role="alert"></p></form>
-<script type="module" src="/guest.js"></script><script type="module" src="/pwa.js"></script></body></html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#141820">
+<title>AI 단톡방</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/assistant.css">
+<link rel="stylesheet" href="/share.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-192.png">
+</head>
+<body class="guest-page">
+<div class="app ws-closed" id="app">
+  <aside class="side" id="side" aria-label="멤버와 내 사용 한도">
+    <div class="side-head">
+      <div class="brand-name" id="sideRoomTitle">AI 단톡방</div>
+      <div class="brand-sub">같은 단톡방 · 친구로 참여 중</div>
+    </div>
+    <div class="side-sec">
+      <div class="sec-label">함께 대화하는 AI</div>
+      <ul class="members" id="guestMembers"></ul>
+      <div class="me-row"><div class="me-av" id="guestInitial"></div><div class="m-info">
+        <div class="m-name"><span id="guestName"></span><span class="m-tag">나</span></div>
+        <div class="m-status">친구</div>
+      </div></div>
+    </div>
+    <div class="side-sec">
+      <div class="sec-label">오늘의 AI 사용</div>
+      <p class="guest-usage" id="guestStatus"></p>
+      <p class="hint">그냥 대화하면 AI도 자연스럽게 참여해요. @Claude, @GPT, @Gemini로 부를 수 있어요. 방장이 Talk를 켠 동안 배정된 한도 안에서 반응합니다.</p>
+      <p class="hint">공용 한도는 입장 권한이 있는 친구끼리 나눠 써요. 한도를 다 써도 일반 채팅은 계속됩니다.</p>
+      <p class="hint">입장한 이후의 대화만 보여요. 방 설정과 작업대는 방장이 관리합니다.</p>
+      <div data-pwa-install></div>
+      <a class="guest-logout" href="/logout">로그아웃</a>
+    </div>
+  </aside>
+  <main class="chat" aria-label="단톡방 채팅">
+    <header class="chat-head">
+      <button class="icon-btn only-narrow" id="openSide" type="button" aria-label="멤버와 내 사용 한도 보기" aria-expanded="false" aria-controls="side">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="head-title"><div class="t" id="roomTitle">AI 단톡방</div><div class="s" id="guestConnection" role="status">연결 중…</div></div>
+      <div class="head-actions">
+        <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </header>
+    <div class="timeline" id="timeline" tabindex="0" aria-label="대화 기록">
+      <div id="msgs"><div id="guestMessages" role="log" aria-live="polite" aria-relevant="additions text"></div></div>
+      <p class="sys" id="guestEmpty">친구들과 첫 메시지를 나눠 보세요.</p>
+    </div>
+    <button class="jump" id="guestJump" type="button" hidden>새 메시지 ↓</button>
+    <div class="typing" id="guestTyping" role="status"></div>
+    <form id="guestForm" class="composer">
+      <div class="compose-row">
+        <textarea id="guestText" maxlength="4000" rows="1" required aria-label="메시지" placeholder="친구들과 대화해 보세요."></textarea>
+        <button class="send" id="guestSend" type="submit" aria-label="전송" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div class="guest-compose-options">
+        <span>AI 자동 참여 · @이름으로 부르기</span>
+        <span id="guestRemaining"></span>
+      </div>
+      <p id="guestError" class="share-error" role="alert"></p>
+    </form>
+  </main>
+</div>
+<button class="scrim" id="scrim" type="button" aria-label="멤버 목록 닫기" hidden></button>
+<script type="module" src="/guest.js"></script>
+<script type="module" src="/pwa.js"></script>
+</body>
+</html>

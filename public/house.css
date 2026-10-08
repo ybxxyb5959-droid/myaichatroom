@@ -1,6 +1,7 @@
 /* The house view is scoped to #house; the chat room is untouched. */
 .house { position: fixed; inset: 0; z-index: 80; background: #efe6d2; color: #1b1f2a; animation: hs-open .22s ease-out; }
 .house[hidden] { display: none; }
+.house [hidden] { display: none !important; }
 :root[data-theme="dark"] .house { background: #1d2230; color: #e7e9ef; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .house { background: #1d2230; color: #e7e9ef; } }
 @keyframes hs-open { from { opacity: 0; } to { opacity: 1; } }
@@ -16,7 +17,7 @@
 .hs-bar span { flex: 1; font-size: 12px; color: var(--muted, #667); }
 .hs-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; font-size: 14px; color: var(--muted, #667); line-height: 1.7; }
 .hs-plan { position: absolute; top: 118px; left: 12px; width: min(300px, calc(100vw - 24px)); max-height: 20vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 88%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); animation: hs-pop .22s ease-out; }
-.hs-plan p { margin: 4px 0 0; line-height: 1.55; }
+.hs-plan p { margin: 4px 0 0; line-height: 1.55; white-space: pre-line; }
 .hs-log { position: absolute; left: 12px; bottom: 12px; width: min(380px, calc(100vw - 24px)); display: grid; gap: 4px; }
 .hs-log > button { justify-self: start; padding: 4px 12px; border-radius: 9px; border: 1px solid var(--line, #0002); background: color-mix(in srgb, var(--panel, #fff) 92%, transparent); color: var(--text, inherit); font: inherit; font-size: 12px; cursor: pointer; }
 #hsLogList { max-height: 34vh; overflow: auto; padding: 8px 12px; border-radius: 12px; font-size: 13px; line-height: 1.5; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
@@ -51,13 +52,35 @@
 .hs-tools { position: absolute; z-index: 3; top: 70px; left: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
 .hs-tools button { padding: 7px 10px; border-radius: 9px; border: 1px solid var(--line, #0002); background: var(--panel, #fff); color: var(--text, #1b1f2a); cursor: pointer; font: inherit; font-size: 12px; }
 .hs-tools button[aria-pressed="true"] { background: var(--accent, #1f9d74); color: white; }
+.hs-tools button[aria-expanded="true"] { background: var(--accent, #1f9d74); color: white; }
+.hs-room, .hs-vote { position: absolute; z-index: 4; right: 12px; top: 118px; width: min(310px, calc(100vw - 24px)); padding: 12px; border-radius: 12px; background: var(--panel, #fff); color: var(--text, #1b1f2a); border: 1px solid var(--line, #0002); font-size: 13px; }
+.hs-room > button { float: right; border: 0; background: transparent; color: inherit; font-size: 20px; cursor: pointer; }
+.hs-vote { top: auto; bottom: 44px; max-height: 45vh; overflow: auto; }
+.hs-vote small { display: block; margin: 8px 0; }
+.hs-vote button { display: grid; gap: 5px; text-align: left; width: 100%; padding: 9px; margin-top: 6px; border-radius: 8px; border: 1px solid var(--line, #0002); background: transparent; color: inherit; cursor: pointer; }
+.hs-vote button span { font-size: 12px; }
+.hs-vote button:disabled { opacity: .5; cursor: wait; }
+.hs-activity { position: absolute; z-index: 4; right: 12px; bottom: 44px; width: min(280px, calc(100vw - 24px)); padding: 10px; border-radius: 12px; background: color-mix(in srgb, var(--panel, #fff) 94%, transparent); color: var(--text, #1b1f2a); border: 1px solid var(--line, #0002); font-size: 12px; }
+#hsActivityToggle { display: flex; align-items: center; gap: 7px; width: 100%; padding: 3px 2px 8px; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+#hsActivityToggle b { flex: 1; text-align: left; }
+.hs-activity-row { display: grid; grid-template-columns: 7px 64px minmax(0, 1fr); gap: 7px; align-items: center; width: 100%; padding: 7px 5px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hs-activity-row i { width: 7px; height: 7px; border-radius: 50%; }
+.hs-activity-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted, #667); }
+.hs-activity-row:hover, .hs-activity-row[aria-pressed="true"] { background: color-mix(in srgb, var(--accent, #1f9d74) 16%, transparent); }
+.hs-activity-row:disabled { opacity: .5; cursor: default; }
+.hs-activity-recent { display: grid; gap: 4px; border-top: 1px solid var(--line, #0002); margin: 6px 0 0; padding: 8px 4px 2px; }
+.hs-activity-recent small { color: var(--muted, #667); }
+.hs-activity-recent span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hs-activity.collapsed { width: auto; padding: 8px; }
+.hs-activity.collapsed #hsActivityToggle { width: 26px; height: 26px; justify-content: center; padding: 0; }
+.hs-activity.collapsed .hs-activity-title { display: none; }
 .hs-tools button:disabled { opacity: .5; cursor: default; }
 .hs-error[hidden] { display: none; }
 .hs-follow { display: flex; gap: 6px; }
 .hs-follow button { display: flex; align-items: center; gap: 5px; padding: 3px 9px 3px 4px; }
 .hs-follow img { width: 22px; height: 22px; border-radius: 50%; background: #fff; object-fit: cover; }
 #hsProgress[hidden] { display: none; }
-.hs-progress { position: absolute; z-index: 2; right: 12px; bottom: 42px; width: min(300px, calc(100vw - 24px)); max-height: 52vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
+.hs-progress { position: absolute; z-index: 2; right: 12px; top: 118px; width: min(300px, calc(100vw - 24px)); max-height: 40vh; overflow: auto; padding: 10px 14px; border-radius: 12px; font-size: 12px; background: color-mix(in srgb, var(--panel, #fff) 90%, transparent); border: 1px solid var(--line, #0002); color: var(--text, inherit); }
 #hsProgress button { display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; width: 100%; margin-top: 5px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line, #0002); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 #hsProgress em { font-style: normal; font-size: 11px; }
 #hsProgress small { grid-column: 1 / -1; color: var(--muted, #667); font-size: 10.5px; }
@@ -81,4 +104,10 @@
   .hs-diary { top: 116px; right: 6px; width: calc(50vw - 12px); max-height: 20vh; padding: 8px; }
   .hs-log { bottom: calc(24vh + 76px); left: 6px; width: min(320px, calc(100vw - 12px)); }
   #hsLogList { max-height: 13vh; font-size: 11px; }
+}
+@media (max-width: 640px) {
+  .house .hs-log { bottom: 6px; left: 6px; width: calc(100vw - 12px); }
+  .house .hs-plan, .house .hs-progress, .house .hs-diary, .house .hs-room { top: 150px; bottom: auto; left: 6px; right: 6px; width: auto; max-height: 32vh; overflow: auto; }
+  .house .hs-vote, .house .hs-activity { top: auto; bottom: calc(var(--hs-chat-height, 160px) + 12px); left: auto; right: 6px; width: min(280px, calc(100vw - 12px)); max-height: 35vh; overflow: auto; }
+  .house .hs-activity.collapsed { width: auto; }
 }

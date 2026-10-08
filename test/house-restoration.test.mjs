@@ -62,12 +62,15 @@ test('life events progress from conflict to mediation and reconciliation and sta
 
 test('house construction uses its own prompt and counted calls; OFF and regular chat remain unchanged', async (t) => {
   const s = await roomFixture(t, { ids: ['gpt'], discussionReply: () => ({ ok: true, text: JSON.stringify({
-    say: '서재부터 지어 볼게', actions: [{ type: 'floor', x1: 2, z1: 2, x2: 3, z2: 3, color: 'wood' }],
+    say: '서재부터 지어 볼게',
+    design: { title: '작은 서재부터', rooms: [{ name: '서재', owner: 'gpt', x1: 2, z1: 2, x2: 3, z2: 3, min: 1, uses: [] }], entry: [2, 2] },
+    actions: [{ type: 'floor', x1: 2, z1: 2, x2: 3, z2: 3, color: 'wood' }],
   }) }) });
   const brief = buildBrief('gpt', s.cfg);
   await s.advance(60001);
   assert.equal(s.calls.length, 0);
   await s.start();
+  await s.post('/api/house/continue-solo', {});
   await s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 1); assert.match(s.calls[0].brief, /같이 "집"/);
   assert.equal(s.app.store.state.houseUsage.calls, 1);
@@ -91,7 +94,7 @@ test('stopping the room waits for a house call and refuses its late layout chang
       resolve({ ok: true, text: '{"actions":[{"type":"floor","x1":2,"z1":2,"x2":3,"z2":3,"color":"wood"}]}' });
     }, { once: true });
   }) });
-  await s.start(); s.clock.now += 60001;
+  await s.start(); await s.post('/api/house/continue-solo', {}); s.clock.now += 60001;
   const pending = s.app.houseRuntime.tick();
   assert.equal(s.calls.length, 1);
   await s.post('/api/room', { auto: { on: false } });

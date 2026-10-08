@@ -117,7 +117,7 @@ function adapter() {
 async function start(t, { clock, root, usage = null } = {}) {
   root ??= temp(t, 'fun-app-');
   const a = adapter();
-  const app = createAssistantServer({ root, cfg: { ...loadConfig(), autoSleepMinutes: 0 }, adapter: a, usage, clock: () => clock.t, random: seeded(4), autoTickMs: 3600000, wait: async () => {} });
+  const app = createAssistantServer({ root, cfg: { ...loadConfig(path.join(root, 'no-user-config.json')), autoSleepMinutes: 0 }, adapter: a, usage, clock: () => clock.t, random: seeded(4), autoTickMs: 3600000, wait: async () => {} });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());
   const url = `http://127.0.0.1:${app.server.address().port}`;

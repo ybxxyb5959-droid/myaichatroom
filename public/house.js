@@ -1,6 +1,7 @@
 // The house UI keeps its existing API and saved grid; only its visual view changes.
 import { esc } from './format.mjs';
 import { bindHouseControls } from './house-controls.mjs';
+import { actorActivity } from './house-view.mjs';
 
 const COLORS = { claude: '#d97a3a', gpt: '#2f7cf6', gemini: '#5b6cf0' };
 const panel = document.createElement('section');
@@ -12,13 +13,29 @@ panel.innerHTML = `
   <nav class="hs-tools" aria-label="집 시점">
     <button type="button" id="hsReset" aria-pressed="true">집 전체</button>
     <button type="button" id="hsPhoto" disabled>사진 저장</button>
+    <button type="button" data-panel="hsPlan" aria-expanded="false">공동 계획</button>
+    <button type="button" data-panel="hsProgress" aria-expanded="false">진행 상세</button>
+    <button type="button" data-panel="hsDiary" aria-expanded="false">집 기록</button>
     <button type="button" id="hsPlayer" hidden>내 캐릭터</button>
+    <button type="button" id="hsContinueSolo" hidden>혼자 계속하기</button>
     <span class="hs-follow" id="hsFollow" role="group" aria-label="캐릭터 따라가기">${Object.keys(COLORS).map((id) => `<button type="button" data-follow="${id}" aria-pressed="false" title="이 캐릭터를 따라가요"><img src="/avatars/${id}-pixel-128.png" alt=""><span></span></button>`).join('')}</span>
   </nav>
   <p class="hs-empty" id="hsEmpty" hidden>아직 아무것도 없어요.<br>Talk가 켜져 있으면 AI들이 천천히 집을 짓기 시작해요.</p>
   <p class="hs-error" id="hsError" role="alert" hidden></p>
   <aside class="hs-plan" id="hsPlan" hidden><b>공동 계획</b><p id="hsPlanText"></p></aside>
   <aside class="hs-progress" id="hsProgress" aria-label="공사 진행" hidden></aside>
+  <aside class="hs-room" id="hsRoom" aria-label="선택한 방" hidden></aside>
+  <aside class="hs-vote" id="hsVote" aria-label="인테리어 투표" hidden></aside>
+  <aside class="hs-activity" id="hsActivity" aria-label="작업현황" hidden>
+    <button type="button" id="hsActivityToggle" aria-expanded="true" aria-controls="hsActivityBody" aria-label="작업현황 접기">
+      <span aria-hidden="true">🔨</span><b class="hs-activity-title">작업현황</b><span class="hs-activity-title" aria-hidden="true">▾</span>
+    </button>
+    <div id="hsActivityBody">
+      ${Object.keys(COLORS).map((id) => `<button type="button" class="hs-activity-row" data-activity-follow="${id}" aria-pressed="false" disabled>
+        <i aria-hidden="true" style="background:${COLORS[id]}"></i><b></b><span></span></button>`).join('')}
+      <p class="hs-activity-recent"><small>최근 완료</small><span id="hsActivityRecent"></span></p>
+    </div>
+  </aside>
   <aside class="hs-diary" id="hsDiary" hidden aria-label="집 기록">
     <header><b>📖 집 기록</b><div class="hs-mode" id="hsMode" role="group" aria-label="집 운영 방식">
       <button type="button" data-mode="auto" title="AI들이 거의 모든 일을 알아서 정해요">🤖 자율</button>
@@ -35,6 +52,27 @@ const opener = document.querySelector('#houseBtn'), canvas = $('#hsCanvas');
 let data = null, timer = 0, raf = 0, logKey = '', diaryKey = '';
 let scene = null, initializing = null, loading = false;
 let selectedEventId = null;
+let selectedRoom = -1;
+let activityAt = 0;
+$('#hsActivityToggle').onclick = () => {
+  const collapsed = !$('#hsActivityBody').hidden;
+  $('#hsActivityBody').hidden = collapsed;
+  $('#hsActivity').classList.toggle('collapsed', collapsed);
+  $('#hsActivityToggle').setAttribute('aria-expanded', String(!collapsed));
+  $('#hsActivityToggle').setAttribute('aria-label', collapsed ? '작업현황 펼치기' : '작업현황 접기');
+};
+new ResizeObserver(() => panel.style.setProperty('--hs-chat-height', `${Math.ceil($('#hsLog').getBoundingClientRect().height)}px`)).observe($('#hsLog'));
+const openPanels = new Set();
+panel.querySelectorAll('[data-panel]').forEach((button) => {
+  button.onclick = () => {
+    const id = button.dataset.panel;
+    const wasOpen = openPanels.has(id);
+    openPanels.clear();
+    if (!wasOpen) openPanels.add(id);
+    panel.querySelectorAll('[data-panel]').forEach((b) => b.setAttribute('aria-expanded', String(openPanels.has(b.dataset.panel))));
+    diaryKey = ''; if (data) renderSide();
+  };
+});
 function error(message) { $('#hsError').hidden = false; $('#hsError').textContent = message; }
 const clearMovement = bindHouseControls(panel, {
   ready: () => !panel.hidden && !!data?.player && !!scene,
@@ -44,6 +82,8 @@ const clearMovement = bindHouseControls(panel, {
 });
 $('#hsPlayer').onclick = () => { scene.follow = 'user'; scene.zoom = .65; showFollow(); canvas.focus(); };
 canvas.addEventListener('house-render-error', (e) => { error(e.detail); $('#hsPhoto').disabled = true; });
+canvas.addEventListener('house-follow-change', showFollow);
+$('#hsContinueSolo').onclick = () => send('/api/house/continue-solo', {}).catch(e => error(e.message));
 async function initialize() {
   if (scene) return;
   initializing ||= import('./house-scene.mjs').then(({ HouseScene }) => {
@@ -56,6 +96,7 @@ async function initialize() {
 function frame(now) {
   if (panel.hidden) return;
   scene?.render(now);
+  if (now - activityAt >= 500) { activityAt = now; renderActivity(); }
   raf = requestAnimationFrame(frame);
 }
 async function send(route, body) {
@@ -68,9 +109,8 @@ async function send(route, body) {
 const day = (at) => new Date(at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' });
 const time = (at) => new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
 function renderDiary() {
-  const life = data.phase === 'life';
-  $('#hsDiary').hidden = !life;
-  if (!life) return;
+  $('#hsDiary').hidden = !openPanels.has('hsDiary');
+  if ($('#hsDiary').hidden) return;
   const key = JSON.stringify([data.mode, data.open, data.undo, data.events.map((e) => e.id), selectedEventId]);
   if (key === diaryKey) return;
   diaryKey = key;
@@ -102,11 +142,11 @@ function renderDiary() {
     $('#hsUndo').querySelector('button').onclick = () => send('/api/house/undo', {}).catch((e) => error(e.message));
   }
   let last = '';
-  $('#hsEvents').innerHTML = data.events.slice().reverse().map((e) => {
+  $('#hsEvents').innerHTML = '<p class="hs-note">생활 사건은 자동 연출입니다. 실제 AI 발언은 채팅·말풍선에 표시합니다.</p>' + (data.events.slice().reverse().map((e) => {
     const head = day(e.at) !== last ? `<div class="hs-day">${esc(day(e.at))}</div>` : '';
     last = day(e.at);
     return `${head}<div class="hs-event ${esc(e.tone || '')}"><time>${time(e.at)}</time> ${esc(e.text)}</div>`;
-  }).join('') || '<div class="hs-event">아직 기록된 일이 없어요.</div>';
+  }).join('') || '<div class="hs-event">아직 기록된 일이 없어요.</div>');
 }
 $('#hsMode').addEventListener('click', (e) => {
   const b = e.target.closest('[data-mode]');
@@ -114,27 +154,51 @@ $('#hsMode').addEventListener('click', (e) => {
 });
 function renderSide() {
   renderDiary();
+  renderActivity();
   $('#hsPlayer').hidden = $('#hsPlayerHelp').hidden = !data.player;
-  const talk = data.talk ? (data.busy ? '지금 짓는 중…' : data.phase === 'life' ? 'Talk 켜짐 · 생활 중' : `Talk 켜짐 · 다음 작업 ${Math.max(1, Math.round((data.nextAt - Date.now()) / 60000))}분 뒤쯤`) : 'Talk 꺼짐 · 켜면 다시 움직여요';
-  $('#hsStatus').textContent = `${data.phase === 'life' ? '🏠 생활 중' : '🔨 짓는 중'} · 가구 ${data.items.length}개 · ${talk}`;
+  const talk = data.crew?.waiting ? '건축 AI 호출은 쉬고 있어요. 일반 채팅은 계속할 수 있습니다.'
+    : data.talk ? (data.busy ? 'AI가 계획을 검토하고 있어요' : data.nextAt > Date.now() ? '호출 오류로 재시도 대기 중' : 'Talk 켜짐 · 작업을 이어가요') : 'Talk 꺼짐 · 켜면 다시 움직여요';
+  $('#hsStatus').textContent = `${data.crew?.waiting ? '동료 복귀 대기' : data.progress?.stage === 'planning' ? 'AI 공동 계획 논의 중' : data.progress ? `전체 공사 ${data.progress.percent}%` : data.phase === 'life' ? '기본 집 완성' : '집 짓는 중'}${data.talk ? '' : ' · 일시정지'}`;
+  $('#hsContinueSolo').hidden = !data.crew?.waiting || Object.keys(data.agents).length !== 1;
+  $('#hsStatus').title = talk;
   $('#hsEmpty').hidden = !!(data.floors.length || data.walls.length || data.items.length);
-  $('#hsPlan').hidden = !data.plan; $('#hsPlanText').textContent = data.plan;
-  panel.querySelectorAll('[data-follow] span').forEach((s) => { s.textContent = data.names[s.parentElement.dataset.follow]; });
+  $('#hsPlan').hidden = !openPanels.has('hsPlan');
+  const handoff = data.crew?.handoff;
+  $('#hsPlanText').textContent = (data.plan || '아직 공동 계획이 없어요.') + (handoff
+    ? `\n최근 작업 인계 (${handoff.source === 'ai' ? 'AI가 남긴 다음 작업' : '저장 상태 기준'})\n완료: ${handoff.completed}\n남은 일: ${handoff.remaining}\n다음: ${handoff.next} (${handoff.location.x}, ${handoff.location.z})` : '');
+  panel.querySelectorAll('[data-follow] span').forEach((s) => {
+    const id = s.parentElement.dataset.follow;
+    s.textContent = data.names[id]; s.parentElement.hidden = !data.agents[id];
+  });
   const p = data.progress, board = $('#hsProgress');
-  board.hidden = !p || data.phase === 'life';
+  board.hidden = !p || !openPanels.has('hsProgress');
   if (!board.hidden) {
-    const STAGE = { floor: '바닥 까는 중', wall: '벽·문 짓는 중', furniture: '가구 놓는 중' };
+    const STAGE = { planning: 'AI가 목표와 방 구성을 정하고 있어요', floor: '바닥 목표 진행 중', wall: '벽·문 목표 진행 중', furniture: '가구·통로 목표 진행 중' };
     const bar = (done, all) => `<i style="width:${all ? Math.min(100, Math.round(done / all * 100)) : 0}%"></i>`;
-    board.innerHTML = `<b>공사 진행 ${p.percent}%</b> <small>${p.percent === 100 ? '완성!' : STAGE[p.stage]}</small><div class="hs-bar-all">${bar(p.percent, 100)}</div>
-      ${p.rooms.map((r, i) => `<button type="button" data-room="${i}" title="이 방으로 이동"><span>${esc(r.name)}</span><em style="color:${COLORS[r.owner]}">${esc(data.names[r.owner] || r.owner)}</em>
+    board.innerHTML = `<b>${p.percent === null ? '공동 계획 준비 중' : `AI 목표 진행 ${p.percent}%`}</b> <small>${p.percent === 100 ? '목표 완료!' : STAGE[p.stage]}</small><div class="hs-bar-all">${bar(p.percent, 100)}</div>
+      ${p.rooms.map((r, i) => `<button type="button" data-room="${i}" title="이 방으로 이동"><span>${esc(r.name)}</span><em style="color:${COLORS[r.owner] || 'var(--muted)'}">${esc(data.names[r.owner] || r.owner || '참가자 대기')}</em>
         <div class="hs-bar-room">${bar(r.floor, r.floorTotal)}</div><small>바닥 ${r.floor}/${r.floorTotal} · 가구 ${r.count}/${r.min}</small></button>`).join('')}`;
+  }
+  renderRoom();
+  const vote = data.vote, votePanel = $('#hsVote');
+  votePanel.hidden = !vote || vote.status !== 'open';
+  if (!votePanel.hidden) {
+    votePanel.innerHTML = `<b>인테리어 의견이 갈렸어요</b><small>${time(vote.deadline)}까지 선택 · 미참여 시 기본안으로 진행 · 다른 공사는 계속됩니다.</small>`
+      + vote.options.map((o, i) => `<button type="button" data-vote="${i}"><b>${esc(data.names[o.by] || o.by)}: ${esc(o.label)}</b><span>실제 발언: ${esc(o.say)}</span></button>`).join('');
+    votePanel.querySelectorAll('[data-vote]').forEach((b) => {
+      b.onclick = async () => {
+        votePanel.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+        try { await send('/api/house/vote', { voteId: vote.id, choice: Number(b.dataset.vote) }); }
+        catch (e) { error(e.message); await load(); }
+      };
+    });
   }
   const next = JSON.stringify(data.log);
   if (next === logKey) return;
   logKey = next;
   const who = (id) => data.names[id] || (id === 'user' ? data.userName : id === 'house' ? '🏠 집' : id);
   const list = $('#hsLogList');
-  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${esc(l.kind)}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(who(l.id))}</b> ${l.kind === 'build' ? '🔨 ' : ''}${esc(l.text)}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
+  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${esc(l.kind)}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(who(l.id))}</b> ${l.kind === 'build' ? '🔨 ' : l.kind === 'event' ? '[자동 연출/기록] ' : ''}${esc(l.text)}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
   list.scrollTop = list.scrollHeight;
 }
 async function load() {
@@ -152,19 +216,58 @@ function showFollow() {
   const id = scene?.follow || null;
   $('#hsReset').setAttribute('aria-pressed', String(!id));
   panel.querySelectorAll('[data-follow]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.follow === id)));
+  panel.querySelectorAll('[data-activity-follow]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.activityFollow === id)));
+}
+function renderActivity() {
+  if (!data) return;
+  $('#hsActivity').hidden = data.vote?.status === 'open';
+  panel.querySelectorAll('[data-activity-follow]').forEach((button) => {
+    const id = button.dataset.activityFollow;
+    button.hidden = !data.agents[id];
+    const name = data.names[id] || id;
+    const action = scene?.agents[id]?.action || actorActivity({
+      working: data.workingActor === id, doing: data.agents[id]?.doing, paused: data.talk === false,
+    });
+    button.querySelector('b').textContent = name;
+    button.querySelector('span').textContent = data.agents[id] ? action : '참여하지 않음';
+    button.disabled = !scene?.agents[id];
+    button.setAttribute('aria-label', `${name} 따라가기 · ${action}`);
+    button.setAttribute('aria-pressed', String(scene?.follow === id));
+  });
+  const latest = scene ? scene.latestCompletion : data.log.findLast((entry) => entry.kind === 'build');
+  const text = latest ? `${data.names[latest.id] || latest.id} · ${latest.text}` : '아직 완료한 작업이 없어요.';
+  $('#hsActivityRecent').textContent = text;
+  $('#hsActivityRecent').title = text;
+}
+function renderRoom() {
+  const room = data?.progress?.rooms[selectedRoom], card = $('#hsRoom');
+  card.hidden = !room;
+  if (!room) return;
+  card.innerHTML = `<button type="button" aria-label="방 상세 닫기">×</button><b>${esc(room.name)}</b>
+    <p>현재 담당 ${esc(data.names[room.owner] || room.owner || '참가자 대기')}</p>
+    <p>바닥 ${room.floor}/${room.floorTotal} · 가구 ${room.count}/${room.min}</p>
+    <small>${room.accessible ? '출입 가능' : '통로 확인 필요'}${room.missingUses?.length ? ' · 필수 가구 미완료' : ''}</small>`;
+  card.querySelector('button').onclick = () => { selectedRoom = -1; renderRoom(); };
 }
 $('#hsProgress').onclick = (e) => {
   const b = e.target.closest('[data-room]');
   const room = b && data?.progress?.rooms[Number(b.dataset.room)];
-  if (room) { scene?.focusAt(room.x, room.z); showFollow(); }
+  if (room) { selectedRoom = Number(b.dataset.room); renderRoom(); scene?.focusAt(room.x, room.z); showFollow(); }
 };
 $('#hsReset').onclick = () => { scene?.reset(); showFollow(); };
-$('#hsFollow').onclick = (e) => {
-  const b = e.target.closest('[data-follow]');
-  if (!b || !scene) return;
-  scene.follow = scene.follow === b.dataset.follow ? null : b.dataset.follow;
+function followActor(id) {
+  if (!scene || !scene.agents[id]) return;
+  scene.follow = scene.follow === id ? null : id;
   if (scene.follow) scene.zoom = .65;
   showFollow();
+}
+$('#hsFollow').onclick = (e) => {
+  const button = e.target.closest('[data-follow]');
+  if (button) followActor(button.dataset.follow);
+};
+$('#hsActivityBody').onclick = (e) => {
+  const button = e.target.closest('[data-activity-follow]');
+  if (button) followActor(button.dataset.activityFollow);
 };
 $('#hsPhoto').onclick = () => {
   if (!scene || !data) return;
@@ -177,13 +280,19 @@ $('#hsPhoto').onclick = () => {
 };
 let drag = null;
 canvas.oncontextmenu = (e) => e.preventDefault();
-canvas.onpointerdown = (e) => { canvas.focus(); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); };
+canvas.onpointerdown = (e) => { canvas.focus(); drag = { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY, moved: false, pan: e.button === 2 || e.shiftKey }; canvas.setPointerCapture(e.pointerId); };
 canvas.onpointermove = (e) => {
   if (!drag) return;
+  if (Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 5) drag.moved = true;
+  if (!drag.moved) return;
   scene?.orbit(e.clientX - drag.x, e.clientY - drag.y, drag.pan);
   drag.x = e.clientX; drag.y = e.clientY;
 };
-canvas.onpointerup = canvas.onpointercancel = canvas.onlostpointercapture = () => { drag = null; showFollow(); };
+canvas.onpointerup = (e) => {
+  if (drag && !drag.moved && !drag.pan) { selectedRoom = scene?.pickRoom(e.clientX, e.clientY) ?? -1; renderRoom(); }
+  drag = null; showFollow();
+};
+canvas.onpointercancel = canvas.onlostpointercapture = () => { drag = null; showFollow(); };
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); scene?.magnify(e.deltaY); }, { passive: false });
 $('#hsChat').onsubmit = async (e) => {
   e.preventDefault();
@@ -203,6 +312,10 @@ $('#hsLogToggle').onclick = () => {
 };
 async function openHouse(eventId = null) {
   selectedEventId = eventId;
+  if (eventId) {
+    openPanels.add('hsDiary'); diaryKey = '';
+    panel.querySelector('[data-panel="hsDiary"]').setAttribute('aria-expanded', 'true');
+  }
   panel.hidden = false; document.querySelector('#app').inert = true; opener.setAttribute('aria-expanded', 'true');
   const ready = Promise.all([initialize(), load()]);
   clearInterval(timer); timer = setInterval(load, 20000);

@@ -14,7 +14,7 @@ test('removed workbench endpoints and assets are unavailable, while chat and gam
   const original = 'existing project content\n';
   fs.writeFileSync(path.join(project, 'keep.txt'), original);
   const adapter = { available: () => ({ gpt: false, claude: false, gemini: false }) };
-  const options = { root, cfg: loadConfig(), adapter, greetings: false, autoTickMs: 3600000 };
+  const options = { root, cfg: loadConfig(path.join(root, 'no-user-config.json')), adapter, greetings: false, autoTickMs: 3600000 };
   const app = createAssistantServer(options);
   t.after(() => app.close());
   app.store.addMessage({ from: 'user', text: '기존 채팅 보존' });

@@ -116,7 +116,7 @@ test('restored house player and its UI work without calling AI', async (t) => {
   const { root, house } = home(t);
   house.file = path.join(root, 'data', 'house.json'); house.save();
   let calls = 0;
-  const app = createAssistantServer({ root, cfg: loadConfig(), greetings: false,
+  const app = createAssistantServer({ root, cfg: loadConfig(path.join(root, 'no-user-config.json')), greetings: false,
     adapter: { available: () => ({ gpt: true }), chat: async () => { calls++; return { ok: true, text: 'hi' }; } } });
   await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
   t.after(() => app.close());

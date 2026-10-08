@@ -27,8 +27,8 @@ test('one-use invitations, persistent identity, revocation, expiry and daily rea
   assert.equal(sharing.identity(req).guestId, entry.guest.id);
   assert.ok(!fs.readFileSync(sharing.file, 'utf8').includes(entry.secret));
   assert.ok(!fs.readFileSync(sharing.file, 'utf8').includes(invite.secret));
-  for (let n = 0; n < 15; n++) sharing.charge(entry.guest.id);
-  assert.equal(sharing.usage(entry.guest.id).total, 15);
+  for (let n = 0; n < 100; n++) sharing.charge(entry.guest.id);
+  assert.equal(sharing.usage(entry.guest.id).total, 100);
   assert.throws(() => sharing.charge(entry.guest.id), /한도/);
   sharing = new Sharing(root, () => now);
   assert.throws(() => sharing.charge(entry.guest.id), /한도/);
@@ -48,14 +48,15 @@ test('one-use invitations, persistent identity, revocation, expiry and daily rea
   assert.throws(() => sharing.limits({ total: -1 }), /정수/);
 });
 
-async function fixture(t, chat) {
+async function fixture(t, chat, { ids = ['claude'] } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sharing-http-'));
   let now = new Date(2026, 9, 8, 12).getTime(), proxy, stopped = 0;
   const calls = [];
+  const tunnel = async target => { proxy = target; return { url: 'https://room.example.ts.net:8443', stop: async () => { stopped++; } }; };
   const app = createAssistantServer({ root, cfg: loadConfig(path.join(root, 'config.json')), clock: () => now, autoTickMs: 3600000,
-    adapter: { available: () => ({ claude: true, gpt: false, gemini: false }),
+    adapter: { available: () => Object.fromEntries(['claude', 'gpt', 'gemini'].map(id => [id, ids.includes(id)])),
       chat: async (...args) => { calls.push(args); return chat ? chat(...args) : { ok: true, text: '친구 답변입니다.' }; } },
-    tailscaleServe: async target => { proxy = target; return { url: 'https://room.example.ts.net:8443', stop: async () => { stopped++; } }; } });
+    tailscaleServe: tunnel, tailscaleFunnel: tunnel });
   t.after(async () => { await app.close(); fs.rmSync(root, { recursive: true, force: true }); });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const local = `http://127.0.0.1:${app.server.address().port}`;
@@ -98,7 +99,10 @@ async function fixture(t, chat) {
     while (!predicate() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
     assert.ok(predicate(), 'operation should complete');
   };
-  return { app, owner, remote, invite, join, calls, wait, tick: () => { now += 1100; }, proxy: () => proxy, stopped: () => stopped };
+  return { app, owner, remote, invite, join, calls, wait, tick: (ms = 1100) => { now += ms; },
+    start: () => owner('/api/room', { auto: { on: true, sleepMinutes: 0 } }),
+    pump: (ms = 2100) => { now += ms; return app.tickGuestReplies(); },
+    proxy: () => proxy, stopped: () => stopped };
 }
 
 test('QR and PWA document navigation preserves authentication and cross-site API protection', async (t) => {
@@ -206,16 +210,20 @@ test('HTTPS proxy authenticates before room data, isolates guest permissions and
 
 test('friend total 15 limits actual calls, survives restart, rejects unmetered features, and leaves human chat usable', async (t) => {
   const f = await fixture(t);
+  await f.owner('/api/share/limits', { total: 15 });
+  await f.start();
   const { cookie } = await f.join('수진');
   assert.equal((await f.remote('/api/send', { cookie, body: { text: '그림', image: {}, askAI: true } })).status, 403);
   for (let n = 1; n <= 15; n++) {
     f.tick();
-    const response = await f.remote('/api/send', { cookie, body: { text: `질문 ${n}`, askAI: true, ai: 'claude' } });
+    const response = await f.remote('/api/send', { cookie, body: { text: `질문 ${n}` } });
     assert.equal(response.status, 200);
+    await f.pump();
     await f.wait(() => f.calls.length === n && f.app.store.messages.at(-1).from === 'claude');
   }
   f.tick();
-  assert.equal((await f.remote('/api/send', { cookie, body: { text: '한도 초과', askAI: true } })).status, 429);
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '한도 초과여도 채팅 저장' } })).status, 200);
+  await f.pump();
   assert.equal(f.calls.length, 15);
   assert.equal((await f.remote('/api/send', { cookie, body: { text: '대화는 계속' } })).status, 200);
   assert.equal(f.calls.length, 15);
@@ -227,10 +235,12 @@ test('friend total 15 limits actual calls, survives restart, rejects unmetered f
   const disk = new Sharing(path.dirname(path.dirname(f.app.store.stateFile)));
   assert.equal(Object.values(disk.data.usage)[0].total, 15);
   const friend2 = await f.join('현우');
-  assert.equal((await f.remote('/api/send', { cookie: friend2.cookie, body: { text: '다른 친구도 한도 공유', askAI: true } })).status, 429);
+  assert.equal((await f.remote('/api/send', { cookie: friend2.cookie, body: { text: '다른 친구도 한도 공유' } })).status, 200);
+  await f.pump();
   await f.owner('/api/share/limits', { total: 16, guestId: admin.guests[0].id, limit: 16 });
   f.tick();
   assert.equal((await f.remote('/api/send', { cookie, body: { text: '한도 변경 뒤', askAI: true } })).status, 200);
+  await f.pump();
   await f.wait(() => f.calls.length === 16);
   await f.app.close();
   assert.equal(f.stopped(), 1);
@@ -243,17 +253,21 @@ test('failed and cancelled guest calls are charged once, with no late response a
     options.signal.addEventListener('abort', () => resolve({ ok: true, text: '늦게 온 답변' }), { once: true });
   }));
   const { cookie } = await f.join('지연');
+  await f.start();
   await f.remote('/api/send', { cookie, body: { text: '실패할 질문', askAI: true } });
+  const first = f.pump();
   await f.wait(() => !!resolveCall);
   resolveCall({ ok: false, detail: 'quota' });
+  await first;
   await f.wait(() => f.app.store.messages.at(-1).kind === 'error');
   assert.equal((await f.owner('/api/share')).body.usage.total, 1);
-  f.tick(); resolveCall = null;
+  f.tick(20000); resolveCall = null;
   await f.remote('/api/send', { cookie, body: { text: '취소할 질문', askAI: true } });
+  const second = f.pump();
   await f.wait(() => !!resolveCall);
   const admin = (await f.owner('/api/share')).body;
   await f.owner('/api/share/revoke-guest', { id: admin.guests[0].id });
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await second;
   assert.equal(f.calls.length, 2);
   assert.equal((await f.owner('/api/share')).body.usage.total, 2);
   assert.ok(!f.app.store.messages.some(m => m.text === '늦게 온 답변'));
@@ -269,4 +283,233 @@ test('PWA metadata and icons are public but service worker does not cache privat
   assert.equal(sw.headers['service-worker-allowed'], '/');
   assert.equal((await f.remote('/offline.html')).status, 200);
   assert.equal((await f.remote('/api/history')).status, 401);
+});
+
+test('a 24-hour friend link admits ten people, survives reload, and preserves legacy one-use owner links', (t) => {
+  const root = temporary(t), now = 1791420000000;
+  let sharing = new Sharing(root, () => now);
+  const invite = sharing.invite('guest', { maxUses: 10 });
+  assert.equal(invite.exp - now, 24 * 3600000);
+  for (let i = 0; i < 10; i++) {
+    sharing = new Sharing(root, () => now);
+    assert.equal(sharing.redeem(invite.secret, `친구${i}`, 10, '방장', { guestOnly: true }).identity.role, 'guest');
+  }
+  assert.throws(() => sharing.redeem(invite.secret, '열한번째', 10, '방장'), /이미 사용/);
+  const owner = sharing.invite('owner');
+  assert.throws(() => sharing.redeem(owner.secret, '', 10, '방장', { guestOnly: true }), /친구 초대/);
+  assert.equal(sharing.redeem(owner.secret, '', 10, '방장').identity.role, 'owner', 'public rejection does not consume private owner invitation');
+  assert.throws(() => sharing.invite('owner', { maxUses: 10 }), /방장 연결/);
+  assert.throws(() => sharing.invite('guest', { maxUses: 11 }), /최대 10명/);
+  const cancelled = sharing.invite('guest', { maxUses: 10 });
+  sharing.redeem(cancelled.secret, '취소전', 10, '방장');
+  sharing.revokeInvite(cancelled.id);
+  assert.throws(() => sharing.redeem(cancelled.secret, '취소후', 10, '방장'), /만료/);
+});
+
+test('a failed redeem save leaves no guest, session or consumed invitation in memory', (t) => {
+  const sharing = new Sharing(temporary(t));
+  const invite = sharing.invite('guest', { maxUses: 10 }), before = structuredClone(sharing.data);
+  sharing.save = () => { throw new Error('disk failure'); };
+  assert.throws(() => sharing.redeem(invite.secret, '친구', 10, '방장'), /disk failure/);
+  assert.deepEqual(sharing.data, before);
+});
+
+test('guest UI reuses authenticated theme and portraits without exposing owner controls or private reply history', async (t) => {
+  const f = await fixture(t);
+  const secret = f.app.store.addMessage({ from: 'user', text: '입장 전 비밀', ts: 1 });
+  const { cookie } = await f.join('친구화면');
+  const initial = (await f.remote('/api/state', { cookie })).body;
+  assert.ok(initial.selfId);
+  assert.equal(initial.members[0].maker, 'Anthropic');
+  const own = f.app.store.addMessage({ from: 'user', guestId: initial.selfId, displayName: '친구화면', text: '내 메시지', ts: 2 });
+  f.app.store.addMessage({ from: 'claude', text: '**답변**', model: 'test-model', replyTo: own.id, ts: 3 });
+  f.app.store.addMessage({ from: 'claude', text: '과거 답장', replyTo: secret.id, ts: 4 });
+  const hiddenError = f.app.store.addMessage({ from: 'system', kind: 'error', text: '비공개 오류 경로', ts: 5 });
+  f.app.store.addMessage({ from: 'claude', text: '오류 안내', replyTo: hiddenError.id, ts: 6 });
+  const state = (await f.remote('/api/state', { cookie })).body;
+  assert.equal(state.messages.find(m => m.id === own.id).guestId, state.selfId);
+  assert.deepEqual(state.messages.find(m => m.text === '**답변**').replyPreview, { name: '친구화면', text: '내 메시지' });
+  assert.equal(state.messages.find(m => m.text === '과거 답장').replyPreview, undefined);
+  assert.doesNotMatch(JSON.stringify(state), /입장 전 비밀|비공개 오류 경로/);
+  assert.equal(state.room, undefined);
+  const page = (await f.remote('/', { cookie })).text;
+  assert.match(page, /\/style.css/); assert.match(page, /\/assistant.css/);
+  assert.match(page, /id="themeBtn"/); assert.match(page, /id="guestForm"/);
+  assert.doesNotMatch(page, /id="(?:powerBtn|chatterBtn|taskBtn|wsBtn|shareBtn)"/);
+  for (const asset of ['/style.css', '/assistant.css', '/format.mjs', '/avatars/claude-pixel-128.png',
+    '/avatars/gpt-pixel-128.png', '/avatars/gemini-pixel-128.png']) {
+    assert.equal((await f.remote(asset, { cookie })).status, 200, asset);
+    assert.equal((await f.remote(asset)).status, 401, asset);
+  }
+  for (const asset of ['/assistant.js', '/task-screen.js', '/avatars/dev.svg', '/ws/private.txt'])
+    assert.equal((await f.remote(asset, { cookie })).status, 403, asset);
+  await f.owner('/api/share/disconnect', {}); await f.wait(() => f.stopped() === 1);
+  await f.owner('/api/share/connect', { public: true });
+  for (const asset of ['/style.css', '/assistant.css', '/format.mjs', '/avatars/claude-pixel-128.png'])
+    assert.equal((await f.remote(asset, { cookie })).status, 200, asset);
+  for (const route of ['/assistant.js', '/api/room', '/api/tasks', '/api/share'])
+    assert.equal((await f.remote(route, { cookie })).status, 403, route);
+});
+
+test('public Funnel denies owner tokens/cookies and all settings/files/tasks, while metered guest chat and SSE work', async (t) => {
+  const f = await fixture(t);
+  const privateOwner = await f.join('', 'owner'), ownerInvite = await f.invite('owner');
+  await f.owner('/api/share/disconnect', {}); await f.wait(() => f.stopped() === 1);
+  const connected = await f.owner('/api/share/connect', { public: true });
+  assert.equal(connected.body.public, true);
+  assert.equal((await f.owner('/api/share/invite', { role: 'owner' })).status, 403);
+  assert.equal((await f.remote('/api/share/redeem', { body: { token: ownerInvite.token, name: '탈취' } })).status, 403);
+  assert.equal((await f.remote('/api/state', { cookie: privateOwner.cookie })).status, 401);
+  assert.equal((await f.remote('/api/share/session', { cookie: privateOwner.cookie })).body.role, null);
+  const invitation = await f.invite('guest');
+  assert.equal(invitation.maxUses, 10);
+  const response = await f.remote('/api/share/redeem', { body: { token: invitation.token, name: '공개친구', role: 'owner' } });
+  assert.equal(response.body.role, 'guest');
+  const cookie = response.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await f.remote('/api/share/session', { cookie })).body.role, 'guest');
+  const same = await f.remote('/api/share/redeem', { cookie, body: { token: invitation.token, name: '중복' } });
+  assert.equal(same.status, 200);
+  assert.equal((await f.owner('/api/share')).body.invites.find((i) => i.id === invitation.id).uses, 1);
+  const blocked = ['/api/room', '/api/share', '/api/share/limits', '/api/share/connect', '/api/share/invite',
+    '/api/notes', '/api/models', '/api/check/call', '/api/dev/state', '/api/house', '/api/world',
+    '/api/tasks', '/api/tasks/ai', '/api/tasks/attachments', '/api/tasks/events', '/task-screen.js', '/assistant.js', '/api/file?path=secret.txt', '/ws/private.html'];
+  for (const route of blocked) {
+    assert.equal((await f.remote(route, { cookie })).status, 403, route);
+    assert.equal((await f.remote(route, { cookie: privateOwner.cookie, body: {} })).status, 403, route);
+  }
+  assert.match((await f.remote('/', { cookie })).text, /guestForm/);
+  await f.start();
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: 'AI 질문', askAI: true, ai: 'claude' } })).status, 200);
+  await f.pump();
+  await f.wait(() => f.calls.length === 1);
+  await f.wait(() => f.app.store.messages.at(-1).from === 'claude');
+  await f.owner('/api/share/limits', { total: 1 });
+  f.tick();
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '추가 AI' } })).status, 200);
+  await f.pump();
+  assert.equal((await f.remote('/api/send', { cookie, body: { text: '일반 채팅 계속' } })).status, 200);
+  assert.equal(f.calls.length, 1);
+  await new Promise((resolve, reject) => {
+    const req = http.get(f.proxy() + '/events', { headers: { Host: 'room.example.ts.net:8443', Cookie: cookie } }, res => {
+      res.once('data', chunk => {
+        try { assert.match(chunk.toString(), /"role":"guest"/); assert.doesNotMatch(chunk.toString(), /"checks":|"files":/); res.destroy(); resolve(); }
+        catch (e) { res.destroy(); reject(e); }
+      });
+    }); req.on('error', reject);
+  });
+});
+
+test('remaining daily budget is shared fairly on admission, persists, and is not redistributed per call or reconnect', (t) => {
+  const root = temporary(t); let now = new Date(2026, 9, 8, 12).getTime();
+  let s = new Sharing(root, () => now);
+  const join = name => s.redeem(s.invite('guest').secret, name, 10, '방장');
+  const a = join('가').guest.id;
+  assert.equal(s.usage(a).remaining, 100);
+  for (let i = 0; i < 20; i++) s.charge(a);
+  const entryB = join('나'), b = entryB.guest.id;
+  assert.deepEqual([s.usage(a).remaining, s.usage(b).remaining], [40, 40]);
+  for (let i = 0; i < 10; i++) s.charge(b);
+  assert.deepEqual([s.usage(a).remaining, s.usage(b).remaining], [40, 30]);
+  s = new Sharing(root, () => now);
+  assert.deepEqual([s.usage(a).remaining, s.usage(b).remaining], [40, 30]);
+  s.logout(entryB.identity);
+  assert.deepEqual([s.usage(a).remaining, s.usage(b).remaining], [40, 30]);
+  const c = join('다').guest.id;
+  assert.deepEqual([a, b, c].map(id => s.usage(id).remaining), [24, 23, 23]);
+  assert.deepEqual([a, b, c].map(id => s.usage(id).used), [20, 10, 0]);
+  now += 86400000;
+  assert.deepEqual([a, b, c].map(id => s.usage(id).remaining), [34, 33, 33]);
+  assert.equal(s.usage().total, 0);
+});
+
+test('owner caps and pool edits redistribute only unspent calls; revoked guests never refund spent calls', (t) => {
+  const s = new Sharing(temporary(t));
+  const a = s.redeem(s.invite('guest').secret, '가', 0, '방장').guest.id;
+  const b = s.redeem(s.invite('guest').secret, '나', 0, '방장').guest.id;
+  s.limits({ guestId: a, limit: 10 });
+  assert.deepEqual([s.usage(a).remaining, s.usage(b).remaining], [10, 90]);
+  for (let i = 0; i < 10; i++) s.charge(a);
+  assert.throws(() => s.charge(a), /한도/);
+  s.revokeGuest(a);
+  assert.equal(s.usage(b).remaining, 90); assert.equal(s.usage().total, 10);
+  s.limits({ total: 5 });
+  assert.equal(s.usage(b).remaining, 0);
+  s.limits({ total: 100, guestId: b, limit: 0 });
+  assert.equal(s.usage(b).remaining, 0);
+  s.limits({ guestId: b, limit: null });
+  assert.equal(s.usage(b).remaining, 90);
+  const before = structuredClone(s.data);
+  s.save = () => { throw Error('disk failure'); };
+  assert.throws(() => s.charge(b), /disk failure/);
+  assert.deepEqual(s.data, before);
+  assert.throws(() => s.limits({ total: 999 }), /disk failure/);
+  assert.deepEqual(s.data, before);
+});
+
+test('legacy sharing migrates to the 100-call pool once and retains usage, credentials and personal caps', (t) => {
+  const root = temporary(t), s = new Sharing(root);
+  const entry = s.redeem(s.invite('guest').secret, '기존 친구', 0, '방장');
+  s.limits({ total: 15, guestId: entry.guest.id, limit: 5 });
+  s.charge(entry.guest.id); s.charge(entry.guest.id);
+  s.data.version = 1; s.save();
+  const migrated = new Sharing(root);
+  assert.equal(migrated.usage().limit, 100);
+  assert.equal(migrated.usage(entry.guest.id).used, 2);
+  assert.equal(migrated.usage(entry.guest.id).remaining, 3);
+  assert.equal(migrated.identity({ headers: { cookie: migrated.cookie(entry.secret, true) } }).guestId, entry.guest.id);
+  migrated.limits({ total: 25 });
+  assert.equal(new Sharing(root).usage().limit, 25, 'later owner settings are not overwritten');
+});
+
+test('ordinary friend messages batch automatically, use mention priority and recent identity context, and do not chain calls', async (t) => {
+  const f = await fixture(t, async () => ({ ok: true, text: '@GPT 다음에도 같이 얘기하자' }), { ids: ['claude', 'gpt'] });
+  const { cookie } = await f.join('일상친구'); await f.start();
+  await f.remote('/api/send', { cookie, body: { text: '오늘 산책했어' } });
+  f.tick();
+  await f.remote('/api/send', { cookie, body: { text: '@Claude 날씨 좋더라', askAI: false, ai: 'gpt' } });
+  assert.equal(f.calls.length, 0);
+  assert.equal((await f.remote('/api/state', { cookie })).body.autoReply, 'queued');
+  await f.pump();
+  assert.equal(f.calls.length, 1); assert.equal(f.calls[0][0], 'claude');
+  assert.match(f.calls[0][2], /일상친구/); assert.match(f.calls[0][2], /오늘 산책했어/);
+  assert.match(f.calls[0][2], /날씨 좋더라/);
+  assert.equal((await f.owner('/api/share')).body.usage.total, 1);
+  await f.pump(10000); assert.equal(f.calls.length, 1);
+  assert.equal(f.app.runtime.store.recent(100).some(m => m.guestId), false);
+});
+
+test('friends queue while a reply is running; multiple friends cannot double-charge or overlap providers', async (t) => {
+  const releases = [];
+  const f = await fixture(t, () => new Promise(resolve => releases.push(resolve)), { ids: ['claude', 'gpt'] });
+  const a = await f.join('가'), b = await f.join('나'); await f.start();
+  await f.remote('/api/send', { cookie: a.cookie, body: { text: '@Claude 안녕' } });
+  const first = f.pump();
+  assert.equal(f.app.runtime.agents.claude.busy, true);
+  await f.remote('/api/send', { cookie: b.cookie, body: { text: '@GPT 나도 안녕' } });
+  await f.pump(); assert.equal(f.calls.length, 1);
+  releases[0]({ ok: true, text: '안녕 가' }); await first;
+  const second = f.pump();
+  assert.equal(f.calls.length, 2); assert.equal(f.calls[1][0], 'gpt');
+  releases[1]({ ok: true, text: '안녕 나' }); await second;
+  const admin = (await f.owner('/api/share')).body;
+  assert.equal(admin.usage.total, 2);
+  assert.deepEqual(admin.guests.map(g => g.usage.used), [1, 1]);
+  assert.deepEqual(admin.guests.map(g => g.usage.remaining), [49, 49]);
+});
+
+test('Talk OFF cancels a guest response and queued batches, and cannot be overridden by a friend', async (t) => {
+  const f = await fixture(t, (_id, _brief, _prompt, options) => new Promise(resolve => {
+    options.signal.addEventListener('abort', () => resolve({ ok: true, text: '늦은 친구 답변' }), { once: true });
+  }));
+  const { cookie } = await f.join('중지 확인'); await f.start();
+  await f.remote('/api/send', { cookie, body: { text: '대화해줘' } });
+  const running = f.pump();
+  f.tick(); await f.remote('/api/send', { cookie, body: { text: '이어 말할게' } });
+  await f.owner('/api/room', { auto: { on: false } }); await running;
+  assert.equal(f.calls[0][3].signal.aborted, true);
+  assert.ok(!f.app.store.messages.some(m => m.text === '늦은 친구 답변'));
+  assert.equal((await f.owner('/api/share')).body.usage.total, 1);
+  assert.equal((await f.remote('/api/room', { cookie, body: { auto: { on: true } } })).status, 403);
+  await f.start(); await f.pump(10000);
+  assert.equal(f.calls.length, 1, 'queued messages are not replayed after OFF');
 });

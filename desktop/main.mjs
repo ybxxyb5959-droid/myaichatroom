@@ -18,6 +18,13 @@ async function launch() {
   // The packaged smoke check must never sign in, query usage or invoke a real AI.
   const adapter = smoke ? { available: () => ({ gpt: false, claude: false, gemini: false }) } : new Adapters(root, cfg);
   backend = createAssistantServer({ root, cfg, adapter,
+    folderPicker: async () => {
+      if (!window || window.isDestroyed()) throw new Error('앱 창에서 폴더를 선택해 주세요.');
+      const selected = await dialog.showOpenDialog(window, {
+        title: '작업대 프로젝트 폴더 선택', buttonLabel: '폴더 연결', properties: ['openDirectory', 'dontAddToRecent'],
+      });
+      return selected.canceled ? null : selected.filePaths[0];
+    },
     usage: smoke ? null : new UsageMonitor(root, adapter.bins), greetings: !smoke });
   await new Promise((resolve, reject) => {
     backend.server.once('error', reject);
@@ -81,7 +88,7 @@ async function launch() {
         await new Promise(resolve => setTimeout(resolve, 25));
       const empty = document.querySelector('#empty');
       const title = document.querySelector('#emptyDotTitle');
-      const pets = [...document.querySelectorAll('.empty-character svg')];
+      const pets = [...document.querySelectorAll('#empty .empty-character svg')];
       const examples = [...document.querySelectorAll('#examples button')];
       const theme = document.documentElement.getAttribute('data-theme');
       document.documentElement.setAttribute('data-theme', 'light');

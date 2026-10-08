@@ -32,11 +32,12 @@ test('original self boost can post a short lead-in, upgrades once and observes i
   assert.equal(s.calls.length, 3);
 });
 
-test('a boost failure falls back to normal once, then the ordinary error backoff handles failure', async (t) => {
+test('a boost failure falls back to normal once, then quota failure temporarily removes the member', async (t) => {
   const s = await roomFixture(t, { ids: ['gpt'], reply: () => ({ ok: false, detail: 'usage limit reached' }) });
   await s.start(); await s.turn('/boost @GPT 확인');
   assert.deepEqual(s.calls.map((c) => !!c.options.boost), [true, false]);
   assert.equal(s.app.runtime.agents.gpt.fails, 1);
   assert.equal(s.app.runtime.agents.gpt.offlineUntil - s.clock.now, 20000);
-  assert.equal(s.app.room.enabled.gpt, true);
+  assert.equal(s.app.room.enabled.gpt, false);
+  assert.ok(s.app.store.messages.some((m) => m.kind === 'presence' && m.text === 'ChatGPT가 잠깐 나감'));
 });

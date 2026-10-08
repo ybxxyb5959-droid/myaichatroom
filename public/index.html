@@ -6,6 +6,7 @@
 <title data-i18n="app.title">AI 단톡방</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/assistant.css">
+<link rel="stylesheet" href="/task-screen.css">
 <link rel="stylesheet" href="/share.css">
 <link rel="stylesheet" href="/house.css">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -54,13 +55,6 @@
         </div>
         <p class="hint">내가 말이 없으면 쉬어요. 말 걸면 다시 깨어나요.</p>
       </div>
-      <div id="webSearchField">
-        <div class="field">
-          <span class="field-label">웹 검색 요청</span>
-          <label class="switch"><input id="webSearch" type="checkbox" aria-label="웹 검색 요청"><span></span></label>
-        </div>
-        <p class="hint" id="webHint" hidden>검색 지원은 CLI마다 다릅니다. 답변의 출처를 확인하세요.</p>
-      </div>
       <div class="guide-buttons" id="guideButtons">
         <button class="side-btn" id="openSetup" type="button">연결·모델 설정 다시 열기</button>
         <button class="side-btn" id="openTour" type="button">사용법 다시 보기</button>
@@ -87,6 +81,9 @@
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
+        <button class="icon-btn" id="taskBtn" type="button" aria-label="작업대 열기" aria-pressed="false" aria-controls="taskScreen" title="작업대">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 11-8 9a2 2 0 0 1-3-3l9-8m-2-4 4-3 7 7-3 3-3-3-3 3-4-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
         <button class="icon-btn ws-toggle" id="wsBtn" type="button" aria-label="작업공간 열기/닫기" data-i18n-aria="head.ws">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
           <span class="badge" id="wsBadge" hidden></span>
@@ -94,6 +91,314 @@
       </div>
     </header>
 
+    <section id="taskScreen" aria-label="작업대" hidden>
+      <aside class="task-sidebar" id="taskSidebar" aria-label="작업대 프로젝트와 대화 기록">
+        <div class="task-brand">작업대 <span>로컬 저장</span></div>
+        <button id="taskNew" class="task-new" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5H5v14h14v-7M10 14l1-4 8-8 3 3-8 8-4 1z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+          새 작업
+        </button>
+        <nav class="task-sidebar-lists" aria-label="작업 목록">
+          <section class="task-sidebar-group" aria-labelledby="taskProjectsHeading">
+            <h2 id="taskProjectsHeading">프로젝트</h2>
+            <form id="taskProjectForm" class="task-project-form">
+              <input id="taskProjectName" aria-label="프로젝트 이름" placeholder="프로젝트 이름" maxlength="100" required>
+              <div><button id="taskProjectAdd" type="submit">＋ 추가</button><button id="taskProjectRename" type="button">이름 변경</button></div>
+              <button id="taskProjectLinked" type="button" title="이름을 비워 두면 선택한 폴더 이름으로 만듭니다">폴더 선택해서 새 프로젝트</button>
+            </form>
+            <div id="taskProjects"></div>
+            <div class="task-folder" id="taskFolder">
+              <span id="taskFolderStatus" role="status">폴더 미연결</span>
+              <strong id="taskFolderName"></strong>
+              <p id="taskFolderPath"></p>
+              <p id="taskFolderError" role="alert" hidden></p>
+              <div class="task-folder-actions">
+                <button id="taskFolderPick" type="button" disabled>폴더 연결</button>
+                <button id="taskFolderDisconnect" type="button" title="연결 정보만 해제합니다. PC의 파일은 삭제하지 않습니다." disabled>연결 해제</button>
+                <button id="taskFolderCheck" type="button" disabled>상태 확인</button>
+              </div>
+            </div>
+          </section>
+          <section class="task-sidebar-group" aria-labelledby="taskHistoryHeading">
+            <h2 id="taskHistoryHeading">대화 세션</h2>
+            <div id="taskSessions"></div>
+          </section>
+          <section class="task-sidebar-group task-file-group" aria-labelledby="taskFilesHeading">
+            <h2 id="taskFilesHeading">프로젝트 파일 <button id="taskFilesRefresh" type="button" disabled>새로고침</button></h2>
+            <p id="taskFileStatus" class="task-sidebar-empty" role="status">폴더를 연결하면 파일 목록이 표시됩니다.</p>
+            <ul id="taskFileTree" class="task-file-tree" aria-label="프로젝트 파일 목록"></ul>
+          </section>
+          <section class="task-sidebar-group" aria-labelledby="taskPlansHeading">
+            <h2 id="taskPlansHeading">이 세션의 작업 계획</h2>
+            <p id="taskPlanListStatus" class="task-sidebar-empty">아직 작업 계획이 없습니다.</p>
+            <div id="taskPlans"></div>
+          </section>
+          <section class="task-sidebar-group" aria-labelledby="taskChangesHeading">
+            <h2 id="taskChangesHeading">이 세션의 파일 변경안</h2>
+            <p id="taskChangeListStatus" class="task-sidebar-empty">아직 파일 변경안이 없습니다.</p>
+            <div id="taskChangeSets"></div>
+          </section>
+          <section class="task-sidebar-group" aria-labelledby="taskProposalsHeading">
+            <h2 id="taskProposalsHeading">이 세션의 수정안</h2>
+            <p id="taskProposalListStatus" class="task-sidebar-empty">아직 수정안이 없습니다.</p>
+            <div id="taskProposals"></div>
+          </section>
+        </nav>
+        <details class="task-storage"><summary>저장 공간 관리</summary>
+          <p id="taskStorageInfo" role="status">백업·문서 변환 캐시가 차지하는 공간을 확인하고, 더 이상 필요 없는 것만 정리합니다. 적용·복구에 필요한 백업은 절대 지우지 않습니다.</p>
+          <div class="task-folder-actions"><button id="taskStorageCheck" type="button">상태 확인</button><button id="taskStoragePrune" type="button" disabled>불필요한 것 정리</button></div>
+        </details>
+        <p class="task-sidebar-note">파일은 선택했을 때만 읽습니다. 민감 파일·링크는 차단하며 파일을 변경하지 않습니다.</p>
+      </aside>
+      <button id="taskSidebarDismiss" class="task-sidebar-dismiss" type="button" aria-label="작업 목록 닫기" tabindex="-1"></button>
+      <div class="task-main">
+        <header class="task-nav">
+          <button id="taskSidebarToggle" class="icon-btn" type="button" aria-label="프로젝트·대화 기록 열기" aria-expanded="false" aria-controls="taskSidebar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM9 5v14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          </button>
+          <span class="task-project-status">프로젝트 미선택</span>
+          <button id="taskBack" class="icon-btn" type="button" aria-label="작업대 닫고 채팅으로 돌아가기" title="채팅으로 돌아가기">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <section id="taskFilePreview" class="task-file-preview" aria-label="읽기 전용 파일 미리보기" hidden>
+          <div class="task-preview-head">
+            <h2 id="taskPreviewName" tabindex="-1">파일 미리보기</h2>
+            <button id="taskPreviewClose" type="button">미리보기 닫기</button>
+          </div>
+          <button id="taskAnalyzeFile" type="button" disabled>이 파일을 AI 분석에 추가</button>
+          <img id="taskPreviewImage" class="task-preview-image" alt="" hidden>
+          <pre id="taskPreviewFacts" class="task-preview-facts" hidden></pre>
+          <button id="taskImageFile" type="button" hidden>이미지 작업에 추가</button>
+          <button id="taskDocFile" type="button" hidden>PDF·문서·큰 파일을 문서 분석에 추가</button>
+          <p id="taskPreviewMeta"></p>
+          <p id="taskPreviewNotice" role="status"></p>
+          <pre id="taskPreviewText" tabindex="0" aria-label="파일 내용 · 읽기 전용" hidden></pre>
+        </section>
+        <section id="taskProposalView" class="task-proposal-view" aria-label="수정안 비교 · 적용 · 복구" hidden>
+          <div class="task-preview-head">
+            <h2 id="taskProposalTitle" tabindex="-1">수정안 비교</h2>
+            <button id="taskProposalClose" type="button">작업 화면으로</button>
+          </div>
+          <p id="taskProposalMeta"></p>
+          <p id="taskProposalState" role="status"></p>
+          <h3>Claude의 수정 이유</h3><p id="taskProposalReason"></p>
+          <p id="taskProposalCounts"></p>
+          <div id="taskProposalDiff" class="task-diff" aria-label="서버에서 계산한 줄 단위 변경 비교"></div>
+          <details class="task-proposal-source">
+            <summary>변경 전후 전체 코드</summary>
+            <div class="task-proposal-sides">
+              <section><h3>변경 전</h3><pre id="taskProposalBefore"></pre></section>
+              <section><h3>변경 후</h3><pre id="taskProposalAfter"></pre></section>
+            </div>
+          </details>
+          <p id="taskProposalHash"></p>
+          <div class="task-proposal-actions">
+            <button id="taskProposalReject" type="button" disabled>수정안 거절</button>
+            <button id="taskProposalApprove" type="button" disabled>수정 승인</button>
+            <button id="taskProposalApply" type="button" disabled>실제 파일에 적용</button>
+            <button id="taskProposalRestore" type="button" hidden disabled>이전 버전으로 복구</button>
+          </div>
+          <p id="taskProposalProgress" class="task-proposal-progress" role="status" aria-live="polite"></p>
+          <section class="task-proposal-history" aria-labelledby="taskProposalHistoryHeading">
+            <h3 id="taskProposalHistoryHeading">적용·복구 이력</h3>
+            <ol id="taskProposalHistory"></ol>
+          </section>
+          <p class="task-notice">승인만으로는 PC 파일이 바뀌지 않습니다. '실제 파일에 적용'에서 최종 확인한 경우에만 서버가 원본을 백업한 뒤 파일 1개를 변경합니다.</p>
+        </section>
+        <section id="taskPlanView" class="task-proposal-view task-plan-view" aria-label="작업 계획 검토" hidden>
+          <div class="task-preview-head">
+            <h2 id="taskPlanTitle" tabindex="-1">작업 계획</h2>
+            <button id="taskPlanClose" type="button">작업 화면으로</button>
+          </div>
+          <p id="taskPlanMeta"></p>
+          <p id="taskPlanState" role="status"></p>
+          <h3>발견한 문제·개선 대상</h3><ul id="taskPlanIssues"></ul>
+          <h3>수정 대상 파일</h3><ol id="taskPlanFiles" class="task-plan-files"></ol>
+          <h3>위험 요소</h3><ul id="taskPlanRisks"></ul>
+          <label class="task-consent"><input id="taskPlanConsent" type="checkbox">계획된 파일의 내용과 계획이 Anthropic에 전송되며 구독 사용량을 사용함에 동의합니다.</label>
+          <div class="task-proposal-actions">
+            <button id="taskPlanGenerate" type="button" disabled>수정안 생성</button>
+            <button id="taskPlanReject" type="button" disabled>전체 거절</button>
+            <button id="taskPlanApprove" type="button" disabled>전체 승인</button>
+            <button id="taskPlanApply" type="button" hidden disabled>전체 파일 적용</button>
+            <button id="taskPlanRestore" type="button" hidden disabled>전체 변경 복구</button>
+          </div>
+          <p id="taskPlanBatch" class="task-plan-batch" role="status"></p>
+          <h3 id="taskPlanHistoryHeading">적용·복구 이력</h3><ol id="taskPlanHistory" class="task-plan-history"></ol>
+          <p id="taskPlanProgress" class="task-proposal-progress" role="status" aria-live="polite"></p>
+          <p class="task-notice">승인만으로는 PC 파일이 바뀌지 않습니다. "전체 파일 적용"에서 최종 확인한 경우에만 서버가 모든 원본을 백업·검증한 뒤 최대 3개 파일을 교체합니다. 여러 파일 교체는 원자적이지 않아 중간 실패 시 변경된 파일을 백업으로 되돌리며, 외부에서 바뀐 파일은 덮어쓰지 않습니다.</p>
+        </section>
+        <section id="taskChangeView" class="task-proposal-view task-plan-view task-change-view" aria-label="파일 변경안 검토" hidden>
+          <div class="task-preview-head">
+            <h2 id="taskChangeTitle" tabindex="-1">파일 변경안</h2>
+            <button id="taskChangeClose" type="button">작업 화면으로</button>
+          </div>
+          <p id="taskChangeMeta"></p>
+          <p id="taskChangeState" role="status"></p>
+          <h3>변경 작업</h3>
+          <ol id="taskChangeOps" class="task-change-ops"></ol>
+          <div class="task-proposal-actions">
+            <button id="taskChangeReject" type="button" disabled>전체 거절</button>
+            <button id="taskChangeApprove" type="button" disabled>전체 승인</button>
+            <button id="taskChangeApply" type="button" hidden disabled>실제 파일에 적용</button>
+            <button id="taskChangeRestore" type="button" hidden disabled>전체 복구</button>
+          </div>
+          <p id="taskChangeBatch" class="task-plan-batch" role="status"></p>
+          <p id="taskChangeProgress" class="task-proposal-progress" role="status" aria-live="polite"></p>
+          <h3>적용·복구 이력</h3><ol id="taskChangeHistory" class="task-plan-history"></ol>
+          <p class="task-notice">승인만으로는 PC 파일이 바뀌지 않습니다. 적용을 확인하면 서버가 수정·삭제될 모든 원본을 백업·검증한 뒤 파일을 만들고 바꾸고 옮기고 삭제합니다. 중간에 실패하면 이미 적용된 항목을 자동으로 되돌리며, 외부에서 바뀐 파일은 덮어쓰지 않습니다. 프로젝트 폴더 밖과 민감한 파일은 건드리지 않습니다.</p>
+        </section>
+        <dialog id="taskChangeConfirm" class="task-confirm" aria-labelledby="taskChangeConfirmTitle">
+          <form method="dialog">
+            <h2 id="taskChangeConfirmTitle">최종 확인</h2>
+            <dl id="taskChangeConfirmDetails"></dl>
+            <ul id="taskChangeConfirmNotes"></ul>
+            <p id="taskChangeConfirmWarning" class="task-confirm-warning"></p>
+            <div class="task-proposal-actions">
+              <button type="submit" value="cancel" autofocus>취소</button>
+              <button id="taskChangeConfirmAccept" type="submit" value="accept">확인</button>
+            </div>
+          </form>
+        </dialog>
+        <dialog id="taskConfirm" class="task-confirm" aria-labelledby="taskConfirmTitle">
+          <form method="dialog">
+            <h2 id="taskConfirmTitle">최종 확인</h2>
+            <dl id="taskConfirmDetails"></dl>
+            <ul id="taskConfirmNotes"></ul>
+            <p id="taskConfirmWarning" class="task-confirm-warning"></p>
+            <div class="task-proposal-actions">
+              <button type="submit" value="cancel" autofocus>취소</button>
+              <button id="taskConfirmAccept" type="submit" value="accept">확인</button>
+            </div>
+          </form>
+        </dialog>
+        <div class="task-stage">
+          <div class="task-center">
+            <div class="empty-characters" id="taskCharacters" aria-hidden="true"></div>
+            <h1><canvas id="taskDotTitle" class="dot-title" width="340" height="40" role="img" aria-label="작업을 시작해볼까요?">작업을 시작해볼까요?</canvas></h1>
+          </div>
+          <div id="taskMessages" aria-label="저장된 사용자 메시지" hidden></div>
+        </div>
+        <footer class="task-compose">
+          <section id="taskProgress" class="task-progress" aria-label="AI 작업 진행 상황" hidden>
+            <div class="task-progress-head"><strong id="taskProgressTitle" role="status"></strong><button id="taskProgressCancel" type="button" hidden>작업 취소</button></div>
+            <ul id="taskProgressSteps" class="task-progress-steps" aria-live="polite"></ul>
+            <p id="taskProgressError" class="task-progress-error" role="alert" hidden></p>
+            <details id="taskProgressHistory" hidden><summary></summary><ol id="taskProgressRuns"></ol></details>
+          </section>
+          <div id="taskTray" class="task-tray" hidden>
+          <div id="taskAnalysisFiles" class="task-analysis-files" aria-label="AI에 전달할 선택 파일"></div>
+          <label class="task-consent"><input id="taskAIConsent" type="checkbox">요청·선택 파일(자동 탐색 분석은 Claude가 고른 폴더 목록과 파일 내용)·이 세션의 최근 대화가 Anthropic에 전송되며 구독 사용량을 사용함에 동의합니다.</label>
+          <section id="taskAttach" class="task-attach" aria-label="첨부 파일과 문서 분석">
+            <div class="task-attach-head">
+              <button id="taskAttachPick" type="button" disabled>📎 파일 첨부</button>
+              <input id="taskAttachInput" type="file" multiple hidden>
+              <span id="taskAttachHint">PC의 파일을 이 영역으로 끌어다 놓거나 선택하세요. 원본 파일은 수정·이동되지 않고, 이 앱의 데이터 폴더에 복사본만 보관합니다.</span>
+            </div>
+            <ul id="taskAttachList" class="task-attach-list"></ul>
+            <div id="taskDocControls" hidden>
+              <div id="taskDocSources" class="task-doc-sources" aria-label="분석에 추가한 프로젝트 파일"></div>
+              <p id="taskDocEstimate" class="task-doc-estimate" role="status"></p>
+              <div class="task-doc-run">
+                <label for="taskDocDepth">분석 깊이</label>
+                <select id="taskDocDepth"><option value="quick">빠르게</option><option value="normal" selected>보통</option><option value="thorough">꼼꼼히</option></select>
+                <button id="taskDocRun" type="button" class="task-start" disabled>선택한 문서 분석</button>
+              </div>
+              <label class="task-consent"><input id="taskAttachConsent" type="checkbox">선택한 첨부·문서의 내용 중 요청과 관련된 구간이 Anthropic 서비스로 전송되고 구독 사용량을 사용함에 동의합니다. 큰 문서는 일부 구간만 보내며 분석 범위가 답변에 표시됩니다.</label>
+            </div>
+            <details id="taskImagePanel" class="task-image-panel" hidden>
+              <summary>🖼 이미지 작업 (분석 · 편집 · 생성)</summary>
+              <p class="task-doc-estimate">첨부한 이미지나 프로젝트 폴더의 이미지를 고르세요. 결과는 새 파일로 만들어지고 승인 전에는 저장되지 않으며 원본은 바뀌지 않습니다.</p>
+              <div id="taskImageThumbs" class="task-image-thumbs" role="group" aria-label="이미지 선택"></div>
+              <p id="taskImageInfo" class="task-doc-estimate" role="status"></p>
+              <fieldset class="task-image-box"><legend>로컬 편집 (AI 없이 이 PC에서 계산 · PNG)</legend>
+                <div class="task-image-row">
+                  <select id="taskImageOp" aria-label="편집 종류"><option value="resize">크기 변경</option><option value="crop">자르기</option><option value="rotate">회전</option><option value="flip">뒤집기</option><option value="grayscale">흑백</option><option value="brightness">밝기</option><option value="contrast">대비</option><option value="invert">색 반전</option></select>
+                  <span id="taskImageParams">
+                    <span data-for="resize"><input id="taskImgW" type="number" min="1" max="12000" placeholder="너비" aria-label="너비"> × <input id="taskImgH" type="number" min="1" max="12000" placeholder="높이" aria-label="높이"> <label><input id="taskImgFit" type="checkbox">비율 유지</label></span>
+                    <span data-for="crop" hidden><input id="taskImgX" type="number" min="0" placeholder="x" aria-label="x"> <input id="taskImgY" type="number" min="0" placeholder="y" aria-label="y"> <input id="taskImgCW" type="number" min="1" placeholder="너비" aria-label="자를 너비"> <input id="taskImgCH" type="number" min="1" placeholder="높이" aria-label="자를 높이"></span>
+                    <span data-for="rotate" hidden><select id="taskImgDeg" aria-label="회전 각도"><option>90</option><option>180</option><option>270</option></select>°</span>
+                    <span data-for="flip" hidden><select id="taskImgAxis" aria-label="뒤집기 방향"><option value="horizontal">좌우</option><option value="vertical">상하</option></select></span>
+                    <span data-for="brightness" hidden><input id="taskImgAmount" type="range" min="-100" max="100" value="20" aria-label="조절 값(밝기·대비)"></span>
+                    <span data-for="contrast" hidden></span><span data-for="grayscale" hidden></span><span data-for="invert" hidden></span>
+                  </span>
+                  <button id="taskImageAddOp" type="button" disabled>단계 추가</button>
+                </div>
+                <ol id="taskImageOps" class="task-image-ops"></ol>
+                <button id="taskImageLocal" type="button" class="task-start" disabled>편집 변경안 만들기</button>
+              </fieldset>
+              <fieldset class="task-image-box"><legend>AI 이미지 분석 · 생성 · 편집</legend>
+                <label class="task-consent"><input id="taskImageConsent" type="checkbox">선택한 이미지와 요청 내용이 해당 AI 서비스(Anthropic·OpenAI·Google 등)로 전송되고 구독 사용량을 사용함에 동의합니다. 별도 API 키나 추가 결제는 사용하지 않습니다.</label>
+                <div class="task-image-row">
+                  <button id="taskImageAnalyze" type="button" class="task-start" disabled title="위에서 고른 AI(Claude 또는 Codex)가 선택한 이미지를 보고 아래 입력창의 질문에 답합니다.">선택한 이미지 AI 분석</button>
+                </div>
+                <div class="task-image-row">
+                  <select id="taskImageMode" aria-label="이미지 작업 종류"><option value="generate">새로 생성</option><option value="edit">선택한 이미지를 참고해 편집</option></select>
+                  <select id="taskImageProvider" aria-label="이미지 생성 AI"></select>
+                  <button id="taskImageGenerate" type="button" class="task-start" disabled>AI 이미지 생성·편집</button>
+                  <button id="taskImageStatus" type="button">연결 상태</button>
+                </div>
+                <p id="taskImageProviderInfo" class="task-doc-estimate" role="status">아래 입력창의 내용이 프롬프트가 됩니다. 생성에는 최대 4분이 걸릴 수 있고 취소할 수 있습니다.</p>
+              </fieldset>
+            </details>
+            <p class="task-drop-overlay" aria-hidden="true">여기에 놓으면 첨부됩니다</p>
+          </section>
+          <div class="task-examples" role="group" aria-label="작업 예시">
+            <button type="button" data-task-example="이 폴더의 자료를 정리해서 Word 보고서(report.docx)를 만들어 줘. 제목·목차 역할의 소제목·표를 포함해 줘." title="‘파일·문서 변경안 작성’으로 실행하세요">📄 Word 문서</button>
+            <button type="button" data-task-example="이 폴더의 자료로 발표용 PPT 10장(presentation.pptx)을 만들어 줘. 표지·섹션·요약·비교 슬라이드를 섞어 줘." title="‘파일·문서 변경안 작성’으로 실행하세요">📊 PPT 발표 자료</button>
+            <button type="button" data-task-example="폴더의 엑셀 파일을 분석하고 요약 시트를 추가해줘. 합계는 수식으로 넣어 줘." title="‘파일·문서 변경안 작성’으로 실행하세요">📈 Excel 정리</button>
+            <button type="button" data-task-example="따뜻한 노을빛의 작은 오두막 일러스트를 만들어 줘." title="아래 ‘이미지 작업’에서 AI 이미지 생성을 실행하세요">🎨 이미지</button>
+          </div>
+          </div>
+          <div class="task-card">
+            <div class="task-card-top">
+              <span id="taskCardProject" class="task-card-chip" title="현재 프로젝트">📁 프로젝트 없음</span>
+              <select id="taskModeSelect" class="task-card-select" aria-label="작업 방식">
+                <option value="solo">단독 · 하나의 AI가 처리</option>
+                <option value="collab" disabled>협업 · AI끼리 공유하며 개선 (준비 중)</option>
+                <option value="split" disabled>분담 · 각자 맡아 처리 (준비 중)</option>
+              </select>
+              <details class="task-card-menu"><summary>보조</summary>
+                <div class="task-card-menu-body">
+            <button id="taskAICheck" type="button" title="선택한 AI의 설치·로그인 상태를 확인합니다. Gemini는 확인을 위해 아주 짧은 실제 호출 1회를 사용합니다.">연결 확인</button>
+                  <p class="task-card-hint">선택한 AI의 설치·로그인 상태를 확인합니다.</p>
+                </div>
+              </details>
+              <span class="task-card-save">
+              <span id="taskSaveStatus" role="status" aria-live="polite">프로젝트를 만들어 시작하세요</span>
+              <button id="taskRetry" type="button" hidden>저장 다시 시도</button>
+              <button id="taskSaveMessage" type="button" class="task-start" disabled title="사용자 메시지만 저장합니다. AI는 실행하지 않습니다.">메시지 저장 ↑</button>
+              </span>
+            </div>
+            <label class="sr-only" for="taskInput">어떤 작업을 할까요?</label>
+            <textarea id="taskInput" rows="2" maxlength="16000" placeholder="무엇이든 물어보세요…" disabled></textarea>
+            <div class="task-card-bottom">
+              <button id="taskPlus" class="task-card-plus" type="button" aria-expanded="false" aria-controls="taskTray" title="파일 첨부 · 문서 분석 · 이미지 작업 · 예시 · 전송 동의">＋</button>
+            <select id="taskAISelect" class="task-card-select task-card-ai" aria-label="작업대 AI 선택"><option value="claude">Claude Code · Sonnet</option></select>
+              <select id="taskActionSelect" class="task-card-select" aria-label="작업 종류">
+                <option value="taskExploreRun">자동 탐색 분석</option>
+                <option value="taskAIRun">선택 파일 분석</option>
+                <option value="taskChangesRun">파일·문서 변경안</option>
+                <option value="taskPlanRun">작업 계획</option>
+                <option value="taskProposalGenerate">수정안 생성</option>
+              </select>
+              <button id="taskAICancel" type="button" hidden>실행 취소</button>
+              <button id="taskSend" class="task-card-send" type="button" aria-label="실행" title="선택한 작업을 실행합니다 (Ctrl+Enter)" disabled>↑</button>
+            </div>
+          </div>
+          <p class="task-card-status"><span id="taskAIStatus" role="status">AI 연결 확인 중…</span></p>
+          <div class="task-actions-source" hidden>
+              <button id="taskAIRun" type="button" class="task-start" disabled>AI 분석 실행</button>
+              <button id="taskChangesRun" type="button" class="task-start" disabled title="파일 만들기·수정·이름 변경·이동·삭제와 Word·Excel·PowerPoint 문서 생성·수정 변경안을 만듭니다. 승인 전에는 파일을 바꾸지 않습니다.">파일·문서 변경안 작성</button>
+              <button id="taskPlanRun" type="button" class="task-start" disabled title="조사 결과로 작업 계획을 세웁니다. 파일은 수정하지 않습니다.">작업 계획 수립</button>
+              <button id="taskExploreRun" type="button" class="task-start" disabled title="Claude가 필요한 파일을 스스로 찾아 읽습니다. 읽기 전용입니다.">자동 탐색 분석</button>
+              <button id="taskProposalGenerate" type="button" class="task-start" disabled>수정안 생성</button>
+          </div>
+          <p class="task-notice">선택 파일 분석은 최대 5개·파일당 32KB · 자동 탐색은 난이도에 따라 AI 5~10회, 문서(PDF·Office)와 큰 파일은 요청과 관련된 구간만 발췌 · 첨부·대용량 문서는 구간을 골라 요약하고 분석 범위를 표시합니다 · 파일 변경·문서 생성은 변경안 승인과 최종 확인 뒤에만 적용되며 백업으로 복구할 수 있습니다. AI CLI의 도구와 직접 파일 쓰기는 차단합니다.</p>
+        </footer>
+      </div>
+    </section>
     <div class="timeline" id="timeline">
       <button class="load-more" id="loadMore" type="button" hidden data-i18n="chat.loadMore">이전 대화 더 보기</button>
       <section class="empty" id="empty" hidden>
@@ -128,9 +433,14 @@
           <span class="ds-label">토론</span>
           <span class="switch"><input id="debateToggle" type="checkbox" aria-label="토론"><span></span></span>
         </label>
+        <label class="debate-switch" id="webSearchField" title="검색 지원은 CLI마다 다릅니다. 답변의 출처를 확인하세요.">
+          <span class="ds-label">웹 검색 요청</span>
+          <span class="switch"><input id="webSearch" type="checkbox" aria-label="웹 검색 요청" aria-describedby="webHint"><span></span></span>
+        </label>
         <span class="grow"></span>
         <button id="stop" class="stop-pill" type="button" hidden>■ 중지</button>
       </div>
+      <p class="hint" id="webHint" hidden>검색 지원은 CLI마다 다릅니다. 답변의 출처를 확인하세요.</p>
       <div id="modelPop" class="menu-pop" hidden>
         <div class="menu-main" id="menuMain" role="menu" aria-label="모델 설정"></div>
         <div class="menu-sub" id="menuSub" hidden></div>
@@ -174,6 +484,7 @@
 </div>
 
 <script type="module" src="/assistant.js"></script>
+<script type="module" src="/task-screen.js"></script>
 <script type="module" src="/house.js"></script>
 <script type="module" src="/share.js"></script>
 <script type="module" src="/pwa.js"></script>

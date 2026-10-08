@@ -12,6 +12,6 @@ button.onclick = async () => {
   if (installation) {
     await installation.prompt(); await installation.userChoice; installation = null;
   } else {
-    alert('Android: Chrome 메뉴에서 “앱 설치” 또는 “홈 화면에 추가”를 선택하세요.\n\niPhone: Safari에서 공유 → “홈 화면에 추가”를 선택하세요.\n\nQR만 찍으면 자동 설치되는 것은 아닙니다. PC와 단톡방 앱, 양쪽 Tailscale은 계속 켜 두세요.');
+    alert('Android: Chrome 메뉴에서 “앱 설치” 또는 “홈 화면에 추가”를 선택하세요.\n\niPhone: Safari에서 공유 → “홈 화면에 추가”를 선택하세요.\n\nQR만 찍으면 자동 설치되는 것은 아닙니다. 방장 PC와 단톡방 앱의 공유 연결은 계속 켜져 있어야 합니다.');
   }
 };
