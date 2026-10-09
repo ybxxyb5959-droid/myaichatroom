@@ -16,7 +16,7 @@ import { TaskStore } from './lib/task-store.mjs';
 import { TaskAI, ClaudeTaskProvider } from './lib/task-ai.mjs';
 import { CodexTaskProvider, AgyTaskProvider } from './lib/task-providers.mjs';
 import { chooseTaskFolder } from './lib/task-folder.mjs';
-import { readJsonFile } from './lib/atomic.mjs';
+import { readJsonFile, writeJsonFile } from './lib/atomic.mjs';
 import { acquireLock, cleanAtomicTemps } from './lib/task-safety.mjs';
 import { Adapters, killAll } from './lib/agents.mjs';
 import { UsageMonitor } from './lib/usage.mjs';
@@ -33,10 +33,11 @@ import { latestCall } from './public/status.mjs';
 import { World } from './lib/world.mjs';
 import { WorldPlayer } from './lib/world-player.mjs';
 import { HouseRuntime } from './lib/house-runtime.mjs';
+import { SIZE as HOUSE_SIZE } from './lib/house.mjs';
 import { shootWorld } from './lib/worldshot.mjs';
 import { OriginalRoom, SPEEDS, CHAT_FREQUENCIES, WS_CSP } from './lib/original-room.mjs';
 import { prepareOriginalData } from './lib/original-migration.mjs';
-import { Router } from './lib/router.mjs';
+import { Router, needsFresh } from './lib/router.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -69,12 +70,20 @@ export function loadConfig(configFile = process.env.CHATROOM_CONFIG || path.join
     agents: Object.fromEntries(IDS.map((id) => [id, { ...DEFAULTS.agents[id], ...user.agents?.[id] }])),
     debateModels: Object.fromEntries(IDS.map((id) => [id, { ...DEFAULTS.debateModels[id], ...user.debateModels?.[id] }])) };
 }
+// Version names the Claude Code CLI (2.1.289) accepts without a catalog warning. Haiku is called by its alias:
+// the full id claude-haiku-5-5 still answers but is flagged as an unrecognized model by this CLI version.
 const CLAUDE_MODELS = [
-  { id: 'sonnet', label: 'Sonnet', description: '최신 Sonnet 모델을 가리키는 별칭', source: 'help' },
-  { id: 'opus', label: 'Opus', description: '최신 Opus 모델을 가리키는 별칭', source: 'help' },
-  { id: 'haiku', label: 'Haiku', description: '가장 가볍고 빠른 모델', source: 'config' },
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', description: 'Sonnet 5.5 고정 모델 ID', source: 'cli' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', description: '가장 강력한 모델 · 사용량이 가장 많아요', source: 'cli' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', description: '어려운 문제를 깊게 생각해요 · 사용량이 많아요', source: 'cli' },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', description: '성능과 속도의 균형', source: 'cli' },
+  { id: 'haiku', label: 'Haiku 5.5', description: '가장 가볍고 빠른 모델 · CLI 이름 haiku로 불러요', source: 'cli' },
 ];
+// Older settings may still name a family alias; it stays selectable but says what it is instead of "최신".
+const CLAUDE_ALIASES = {
+  sonnet: ['Sonnet (기본 별칭)', 'Claude Code가 정한 기본 Sonnet 버전으로 불러요'],
+  opus: ['Opus (기본 별칭)', 'Claude Code가 정한 기본 Opus 버전으로 불러요'],
+  fable: ['Fable (기본 별칭)', 'Claude Code가 정한 기본 Fable 버전으로 불러요'],
+};
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const GPT_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const BOOST_MODES = ['auto', 'manual', 'off'];
@@ -86,6 +95,9 @@ const CHECK_BRIEF = '연결 확인용 호출이다. 다른 말 없이 OK라고�
 const MIME = { '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
   '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' };
+// Idle keep-alive sockets stay open well past a busy event loop's delay, so a client never reuses a socket
+// the server is closing at that moment (ECONNRESET under load, seen in tests and possible on phones).
+const keepAlive = (listener) => Object.assign(listener, { keepAliveTimeout: 65000, headersTimeout: 66000 });
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const json = (res, status, value) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -178,7 +190,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   const room = {
     selected: IDS.includes(preferences.selected) ? preferences.selected : 'claude',
     synthesizer: IDS.includes(preferences.synthesizer) ? preferences.synthesizer : cfg.synthesizer,
-    discussion: preferences.discussion === true, webSearch: preferences.webSearch === true,
+    discussion: preferences.discussion === true, webSearch: preferences.webSearch === true && !preferences.autoSearch,
     models: Object.fromEntries(IDS.map((id) => [id, saved(id, preferences.models?.[id], cfg.agents[id])])),
     debateModels: Object.fromEntries(IDS.map((id) => [id, saved(id, preferences.debateModels?.[id], cfg.debateModels[id])])),
     enabled: Object.fromEntries(IDS.map((id) => [id, preferences.enabled?.[id] !== false])),
@@ -261,7 +273,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   };
   const catalog = () => Object.fromEntries(IDS.map((id) => {
     const list = id === 'claude' ? [...CLAUDE_MODELS] : id === 'gpt' && modelCache.gpt ? modelCache.gpt.models.map((m) => ({ ...m, source: 'cli' })) : [];
-    const add = (model, source) => { if (model && !list.some((m) => m.id === model)) list.push({ id: model, label: model, description: '', source }); };
+    const add = (model, source) => {
+      if (!model || list.some((m) => m.id === model)) return;
+      const alias = id === 'claude' ? CLAUDE_ALIASES[model] : null;
+      list.push({ id: model, label: alias?.[0] || model, description: alias?.[1] || '', source });
+    };
     [cfg.agents[id].model, cfg.debateModels[id].model, cfg.agents[id].boost?.model, cfg.autoModels?.[id], ...(cfg.modelCatalog?.[id] || [])].forEach((m) => add(m, 'config'));
     [room.models[id].model, room.debateModels[id].model].forEach((m) => add(m, 'custom'));
     return [id, { available: !!available[id], connected: connected(id), listedAt: id === 'gpt' ? modelCache.gpt?.at || null : null,
@@ -292,13 +308,15 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     members: IDS.map((id) => {
       const a = runtime?.agents[id];
       return { id, name: nameOf(id), maker: MEMBERS[id].maker, color: MEMBERS[id].color, available: !!available[id], enabled: room.enabled[id],
-        model: room.models[id].model, typing: !!a?.busy, activity: memberActivity(id), health: a?.offlineUntil > clock() ? { state: 'cooldown', kind: errorKind(a.lastError), until: a.offlineUntil } : null };
+        // writing: really answering (typing out a reply, or a turn it was called by name for); a member only reading is not.
+        model: room.models[id].model, typing: !!a?.busy, writing: !!a?.busy && (a.status === 'typing' || a.turnReason === 'urgent'), activity: memberActivity(id), health: a?.offlineUntil > clock() ? { state: 'cooldown', kind: errorKind(a.lastError), until: a.offlineUntil } : null };
     }),
     catalog: catalog(), usage: usageView(), kinds: KIND_SHORT, messages: chatTail(300), files: store.listFiles(), play: playView('owner'), lastRead: native.lastRead || 0, push: push.status('owner'),
     activity: { recent: Object.fromEntries(IDS.map((id) => [id, activity.list({ actor: id, limit: 5 })])) },
   });
   const publish = () => broadcast('state', view());
-  const HOUSE_DETAIL = new Set(['house-say', 'house-build']);
+  // Building details (house turns and build-world blocks) stay out of the chat timeline; the house screen shows them.
+  const HOUSE_DETAIL = new Set(['house-say', 'house-build', 'world']);
   const inChat = m => !HOUSE_DETAIL.has(m.kind);
   function chatTail(limit, keep = inChat) {
     const out = [];
@@ -331,7 +349,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   } });
   runtime = new OriginalRoom({ ids: ['claude', 'gpt', 'gemini'], store: ordinaryStore, world, adapter, config, room: native, post, broadcast,
     changed: () => {
-      if (runtime && !runtime.room.running) { guestPending.clear(); guestChains.clear(); }
+      if (runtime && runtime.room.sleeping) { guestPending.clear(); guestChains.clear(); }
       houseRuntime?.syncCrew();
       for (const [id, a] of Object.entries(runtime?.agents || {})) {
         if (a.busy || !a.usedSettings || checkedCalls[id] === a.calls) continue;
@@ -346,12 +364,14 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   native.lastUserAt = clock();
   player = new WorldPlayer({ world, clock, broadcast, post, nameOf, activity: () => { native.lastUserAt = clock(); } });
   houseRuntime = new HouseRuntime({ root, ids: IDS, store, runtime, config, post, broadcast, activity, nameOf, clock, random,
-    humans: () => participants().filter(p => p.online).map(p => p.id) });
+    humans: () => participants().filter(p => p.online).map(p => p.id),
+    personOf: (who) => { const guest = sharing.data.guests[String(who).slice('guest:'.length)]; return guest && !guest.revoked ? { name: guest.name, icon: guest.icon || null } : null; } });
   if (native.running) runtime.start();
   persist();
   if (!store.messages.length) post({ from: 'system', kind: 'welcome', text: `${room.roomName} 열렸어! 멤버: ${IDS.map(nameOf).join(' · ')} · ${room.userName}` });
   for (const text of [...store.warnings, ...activity.warnings, ...world.warnings, ...houseRuntime.house.warnings]) post({ from: 'system', kind: 'error', text });
   const tick = () => {
+    settleAutoSearch();
     player.tick();
     playTick();
     const guests = tickGuestReplies();
@@ -375,13 +395,37 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
   async function refreshModels(id) {
     if (id !== 'gpt' || !available.gpt) return;
     const models = await adapter.listModels(id);
-    modelCache.gpt = { models, at: clock() };
+    // A failed listing (null) keeps the previous list instead of leaving a cache with no models.
+    if (Array.isArray(models)) modelCache.gpt = { models, at: clock() };
   }
   function discussionTargets(text) {
     const named = parseCall(text, room.aliases).named;
     const wanted = named.length ? named : IDS;
     const participants = wanted.filter((id) => available[id] && room.enabled[id]);
     return { named, participants, excluded: wanted.filter((id) => !participants.includes(id)).map((id) => ({ id, reason: available[id] ? '참여 꺼짐' : 'CLI 없음' })) };
+  }
+  // Automatic web search: an owner question that needs fresh facts switches web search on (announced under the name
+  // of the member who will answer) and it switches off again once that question is answered. A switch the owner
+  // turned on by hand is never touched.
+  const AUTO_SEARCH_MS = 180000;
+  function startAutoSearch(message, selection) {
+    if (room.webSearch || !needsFresh(message.text)) return;
+    const answerer = selection ? selection.participants[0]
+      : parseCall(message.text, room.aliases).named.find((id) => runtime.active(id)) || IDS.find((id) => runtime.active(id));
+    if (!answerer) return;
+    room.webSearch = true;
+    room.autoSearch = { messageId: message.id, by: answerer, at: clock(), discussion: !!selection };
+    post({ from: 'system', kind: 'auto-search', by: answerer, text: '최신 정보가 필요해서 웹 검색을 켤게요.' });
+  }
+  // Answered = a discussion has finished, or every active member has read past the question and is idle.
+  function settleAutoSearch(force = false) {
+    const auto = room.autoSearch;
+    if (!auto) return;
+    const answered = !auto.discussion && IDS.filter((id) => runtime.active(id))
+      .every((id) => !runtime.agents[id].busy && runtime.agents[id].seen >= auto.messageId);
+    if (!force && !answered && clock() - auto.at < AUTO_SEARCH_MS) return;
+    room.webSearch = false; room.autoSearch = null;
+    persist(); publish();
   }
   function beginDiscussion(message, selection, images, guestIdentity = null, guestWebSearch = false) {
     const models = structuredClone(room.debateModels), controller = new AbortController();
@@ -422,6 +466,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     }).finally(() => {
       room.auto.usage.asked += job.calls;
       active = null; runtime.suspended = false; persist(); publish();
+      if (room.autoSearch?.messageId === message.id) settleAutoSearch(true);
     });
   }
   function trusted(req) {
@@ -451,7 +496,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (ownerShareStarting) return ownerShareStarting;
     ownerShareStarting = (async () => {
       const access = { secure: true, origin: null, share: true, public: false };
-      const listener = http.createServer((req, res) => handle(req, res, access));
+      const listener = keepAlive(http.createServer((req, res) => handle(req, res, access)));
       await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', resolve); });
       access.proxyHost = `127.0.0.1:${listener.address().port}`;
       let connection;
@@ -483,7 +528,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     sharePublic = publicAccess;
     shareStarting = (async () => {
       const access = { secure: true, origin: null, share: true, public: publicAccess };
-      const listener = http.createServer((req, res) => handle(req, res, access));
+      const listener = keepAlive(http.createServer((req, res) => handle(req, res, access)));
       await new Promise((resolve, reject) => {
         listener.once('error', reject);
         listener.listen(0, '127.0.0.1', () => { listener.removeListener('error', reject); resolve(); });
@@ -545,10 +590,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       participants: participants(), files, play: playView(`guest:${guest.id}`, guest), icon: guest.icon || null,
       lastRead: Math.max(guest.lastRead || 0, guest.since), push: push.status(`guest:${guest.id}`),
       autoReply: guestJobs.has(guest.id) || [...guestChains.values()].some(c => c.guestId === guest.id && c.next) ? 'responding' : guestPending.has(guest.id) ? 'queued'
-        : !runtime.room.running || runtime.room.sleeping ? 'paused' : !quota.remaining ? 'limited' : 'ready',
+        : runtime.room.sleeping ? 'paused' : !quota.remaining ? 'limited' : 'ready',
       members: IDS.map((id) => ({ id, name: nameOf(id), maker: MEMBERS[id].maker, color: MEMBERS[id].color,
         available: !!available[id], enabled: room.enabled[id],
-        busy: !!runtime.agents[id]?.busy || [...guestJobs.values()].some(job => job.id === id) })),
+        busy: !!runtime.agents[id]?.busy || [...guestJobs.values()].some(job => job.id === id),
+        writing: (!!runtime.agents[id]?.busy && (runtime.agents[id].status === 'typing' || runtime.agents[id].turnReason === 'urgent')) || [...guestJobs.values()].some(job => job.id === id) })),
       messages: chatTail(150, m => m.id > guest.since && inChat(m)).map((m) => ({
         id: m.id, from: m.from, text: visibleText(m),
         name: m.displayName || nameOf(m.from), guestId: m.guestId || null, ts: m.ts, kind: m.kind,
@@ -567,13 +613,29 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       })) };
   }
   function guestHouseView(identity) {
+    // A friend allowed into the house walks in as their own character while the screen is open.
+    if (sharing.access().permissions.house) houseRuntime.enter(`guest:${identity.guestId}`);
     const state = houseRuntime.view(identity.guestId), guest = sharing.data.guests[identity.guestId];
     // The shared house is visible, but old private chat mirrored into its log is not.
-    return { ...state, role: 'guest', player: null, canParticipate: sharing.access().permissions.house,
+    return { ...state, role: 'guest', canParticipate: sharing.access().permissions.house,
       log: state.log.filter(entry => entry.kind !== 'say' || entry.at >= guest.joinedAt) };
+  }
+  // Chat search: ids of messages (oldest first) whose text contains the words, among what this person can see.
+  // Friends only search from when they joined. The words travel in the request body, never in the URL.
+  function searchChat(body, guest = null) {
+    const q = String(body?.q ?? '').trim().toLowerCase().slice(0, 100);
+    if (!q) return { ids: [] };
+    const ids = [];
+    for (let i = store.messages.length - 1; i >= 0 && ids.length < 300; i--) {
+      const m = store.messages[i];
+      if (!inChat(m) || (guest && m.id <= guest.since) || (m.kind === 'error' && !m.guestId)) continue;
+      if (String(m.text || '').toLowerCase().includes(q)) ids.push(m.id);
+    }
+    return { ids: ids.reverse() };
   }
   function sendGuest(identity, body) {
     const permissions = sharing.access().permissions;
+    if (active) throw Object.assign(new Error('토론이 진행 중이에요. 토론이 끝난 뒤에 보내 주세요.'), { status: 409 });
     if (!permissions.chat) throw Object.assign(new Error('방장이 친구 채팅을 잠시 껐습니다.'), { status: 403 });
     if (body.discussion && !permissions.discussion || (body.askAI || body.webSearch) && !permissions.questions) throw Object.assign(new Error('방장이 이 AI 기능을 허용하지 않았습니다.'), { status: 403 });
     const guest = sharing.data.guests[identity.guestId];
@@ -594,6 +656,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       throw Object.assign(new Error('답장할 메시지가 없습니다.'), { status: 400 });
     sharing.posting(guest.id);
     const message = post({ from: 'user', guestId: guest.id, displayName: guest.name, text, ...(reply ? { replyTo: reply.id } : {}) });
+    // Said from the house screen: also a bubble over the friend's character there.
+    if (body.fromHouse === true && permissions.house) houseRuntime.personSay(`guest:${guest.id}`, text, message.id);
     if (selection) {
       guestPending.clear();
       beginDiscussion(message, selection, [], identity, body.webSearch === true);
@@ -601,7 +665,8 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     }
     const priority = IDS.some(id => atMentions(text, id)) || IDS.includes(reply?.from);
     // Quiet rooms answer friends only when they explicitly call an AI.
-    if (permissions.questions && !active && runtime.room.running && !runtime.room.sleeping && sharing.usage(guest.id).remaining > 0
+    // Talk off still answers friends (like the owner); only an asleep room waits.
+    if (permissions.questions && !active && !runtime.room.sleeping && sharing.usage(guest.id).remaining > 0
       && (priority || native.aiIntensity !== 'quiet')) {
       const now = clock(), previous = guestPending.get(guest.id);
       const createdAt = previous?.createdAt ?? now;
@@ -698,6 +763,52 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     if (controller.signal.aborted || closed) return;
     play.fillGame(game.id, content, content ? id : null);
     publish();
+  }
+  // Starting the room over. Everything is copied to data/reset-backup-<time> first; then only the chosen parts
+  // are cleared in place. Connections, models, friends and the workbench are never touched.
+  const RESET_ITEMS = { chat: '채팅 기록', memory: 'AI 기억', houseLog: '집 대화·관계·생활 기록', houseBuild: '집 건물', play: '투표·게임·저장한 메시지', workspace: '작업공간 창작물' };
+  async function resetRoom(items) {
+    const chosen = Object.keys(RESET_ITEMS).filter((key) => items?.[key] === true);
+    if (chosen.includes('houseBuild') && !chosen.includes('houseLog')) chosen.splice(chosen.indexOf('houseBuild'), 0, 'houseLog');
+    if (!chosen.length) throw Object.assign(new Error('초기화할 항목을 골라 주세요.'), { status: 400 });
+    if (active) throw Object.assign(new Error('토론이 끝난 뒤에 초기화해 주세요.'), { status: 409 });
+    await runtime.cancel();
+    await houseRuntime.cancel();
+    const backup = path.join(root, 'data', `reset-backup-${new Date(clock()).toISOString().replace(/[:.]/g, '-')}`);
+    for (const rel of ['data/messages.jsonl', 'data/notes', 'data/state.json', 'data/house.json', 'data/play.json', 'data/activity.json', 'data/workspace-meta.json', ...(chosen.includes('workspace') ? ['workspace'] : [])]) {
+      const from = path.join(root, rel);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(backup, rel), { recursive: true });
+    }
+    if (chosen.includes('chat')) {
+      store.clearMessages(); activity.clear(); guestPending.clear(); guestChains.clear();
+    }
+    if (chosen.includes('memory')) {
+      for (const id of IDS) { store.writeNote(id, ''); room.bios[id] = ''; }
+      room.memos = Object.fromEntries(IDS.map((id) => [id, store.readNote(id)]));
+    }
+    const h = houseRuntime.house.s;
+    if (chosen.includes('houseLog')) {
+      // Vote and event counters keep counting so old chat cards never point at a new vote.
+      Object.assign(h, { log: [], relations: {}, events: [], open: null, undo: null, story: null, voteHistory: [], decorProposal: null, decorVote: null,
+        voteMeta: { ...h.voteMeta, day: '', count: 0, lastAt: null }, driftDay: '' });
+    }
+    if (chosen.includes('houseBuild')) {
+      Object.assign(h, { floors: {}, walls: {}, defs: {}, items: [], plan: '', turns: 0, player: null, visitors: {}, lastTurnAt: 0, lastActor: null, phase: 'build', lifeSince: 0,
+        planning: { design: null, pending: null, nextId: 1, feedback: '', previousPlan: '', legacyComplete: false },
+        crew: { members: null, soloActor: null, turns: 0, waiting: false, override: false, handoff: null },
+        agents: Object.fromEntries(IDS.map((id, i) => [id, { x: HOUSE_SIZE / 2 - 2 + i * 2, z: HOUSE_SIZE - 2 }])) });
+    }
+    if (chosen.some((key) => key.startsWith('house'))) { houseRuntime.house.save(); houseRuntime.changed(); }
+    if (chosen.includes('play')) { play.data = { version: 1, polls: {}, games: {}, bookmarks: {} }; play.save(); }
+    if (chosen.includes('workspace')) {
+      fs.rmSync(store.wsDir, { recursive: true, force: true }); fs.mkdirSync(store.wsDir, { recursive: true });
+      store.meta = {}; writeJsonFile(store.metaFile, store.meta);
+    }
+    persist();
+    post({ from: 'system', kind: 'welcome', text: chosen.includes('chat') ? `채팅방을 새로 시작했어요. (${chosen.map((key) => RESET_ITEMS[key]).join(' · ')} 초기화)`
+      : `${chosen.map((key) => RESET_ITEMS[key]).join(' · ')}을(를) 초기화했어요.` });
+    publish();
+    return { ok: true, items: chosen, backup: path.relative(root, backup).replaceAll('\\', '/') };
   }
   async function playAction(identity, body) {
     const person = personOf(identity), guest = identity?.role === 'guest' ? sharing.data.guests[identity.guestId] : null;
@@ -818,9 +929,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     return { ok: true, name: guest.name, icon: guest.icon ?? null };
   }
   function tickGuestReplies() {
-    if (!runtime.room.running || runtime.room.sleeping || closed || runtime.closed || !shareConnection) {
+    if (runtime.room.sleeping || closed || runtime.closed || !shareConnection) {
       guestPending.clear(); guestChains.clear(); return Promise.resolve();
     }
+    // With Talk off a friend gets one answer; members do not carry on with follow-ups among themselves.
+    const talkOff = !runtime.room.running;
     if (runtime.suspended || active || guestJobs.size
       || Object.values(runtime.agents).filter(a => a.busy || a.imageBusy).length >= cfg.maxInFlight) return Promise.resolve();
     const now = clock();
@@ -828,7 +941,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     // Follow-ups of an existing friend chain go first; the server, not the AI, bounds their number.
     for (const chain of guestChains.values()) {
       if (!chain.next) continue;
-      if (!sharing.valid(chain.identity) || chain.calls >= chain.max || !sharing.usage(chain.guestId).remaining || now - chain.next.dueAt > 60000) {
+      if (talkOff || !sharing.valid(chain.identity) || chain.calls >= chain.max || !sharing.usage(chain.guestId).remaining || now - chain.next.dueAt > 60000) {
         guestChains.delete(chain.id); continue;
       }
       if (now < chain.next.dueAt || !ready(chain.next.id)) continue;
@@ -858,7 +971,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         }
       }
       const chain = { id: crypto.randomUUID(), guestId, identity: pending.identity, cause: pending.message.id, calls: 0,
-        max: FRIEND_CHAIN_MAX[native.aiIntensity] || 1, webSearch: pending.webSearch, next: null };
+        max: talkOff ? 1 : FRIEND_CHAIN_MAX[native.aiIntensity] || 1, webSearch: pending.webSearch, next: null };
       guestChains.set(chain.id, chain);
       return guestTurn(chain, id, { focus: pending.messages });
     }
@@ -891,7 +1004,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       runtime.changed();
       const result = await adapter.chat(id, buildFriendBrief(id, { roomName: room.roomName, userName: room.userName, lively }), prompt,
         { settings, usageKind: 'friend', independent: true, json: true, webSearch: chain.webSearch, boost: false, signal: controller.signal, timeoutMs: 90000 });
-      if (controller.signal.aborted || !sharing.valid(identity) || !runtime.room.running || runtime.suspended || !runtime.active(id)) return;
+      if (controller.signal.aborted || !sharing.valid(identity) || runtime.room.sleeping || runtime.suspended || !runtime.active(id)) return;
       if (!result.ok || typeof result.text !== 'string' || !result.text.trim()) throw new Error(result.detail || 'AI 응답 실패');
       // A plain-text reply (no JSON) is read as one spoken turn, as before.
       const act = parseAction(result.text) ?? (/^\s*[{[]/.test(result.text) ? null : { action: 'say', messages: [result.text.trim()] });
@@ -953,7 +1066,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     externalGate = new ExternalGate(root, { log: (message) => store.log('external', message) });
     const access = { secure: !tailscale, host: tailscale ? host : null, port };
     const handler = (req, res) => handle(req, res, access);
-    const listener = tailscale ? http.createServer(handler) : https.createServer(externalGate.tls(), handler);
+    const listener = keepAlive(tailscale ? http.createServer(handler) : https.createServer(externalGate.tls(), handler));
     await new Promise((resolve, reject) => {
       listener.once('error', reject);
       listener.listen(port, host, () => { listener.removeListener('error', reject); access.port = listener.address().port; resolve(); });
@@ -970,7 +1083,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     catch (error) { if (error.code !== 'ENOENT') throw error; password = '직접 변경한 비밀번호를 사용하세요.'; }
     return { url: `http://${address}:${port}`, password };
   }
-  const server = http.createServer((req, res) => handle(req, res));
+  const server = keepAlive(http.createServer((req, res) => handle(req, res)));
   async function handle(req, res, external = false) {
     try {
       if (!external && !trusted(req)) return json(res, 403, { error: '로컬 접속만 허용합니다.' });
@@ -980,7 +1093,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (external.public) {
         const get = [...guestAssets, '/', '/index.html', '/join', '/logout', '/api/state', '/api/house', '/api/gallery', '/api/gallery/file', '/api/share/session', '/events', '/guest.js',
           '/manifest.webmanifest', '/sw.js', '/pwa.js', '/share.css', '/join.js', '/icon-192.png', '/icon-512.png', '/offline.html'];
-        const allowed = req.method === 'GET' ? get.includes(p) : req.method === 'POST' && ['/api/share/redeem', '/api/share/rejoin', '/api/share/presence', '/api/send', '/api/react', '/api/play', '/api/profile', '/api/read', '/api/summary', '/api/push/subscribe', '/api/push/unsubscribe', '/api/house/ballot'].includes(p);
+        const allowed = req.method === 'GET' ? get.includes(p) : req.method === 'POST' && ['/api/share/redeem', '/api/share/rejoin', '/api/share/presence', '/api/send', '/api/react', '/api/play', '/api/house/player', '/api/search', '/api/profile', '/api/read', '/api/summary', '/api/push/subscribe', '/api/push/unsubscribe', '/api/house/ballot'].includes(p);
         if (!allowed) return json(res, 403, { error: '공개 연결에서는 친구 채팅만 사용할 수 있습니다.' });
       }
       if (p === '/api/tasks/attachments') {
@@ -1226,6 +1339,11 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
             if (url.searchParams.get('info') === '1') return json(res, 200, { image: file.image, activity: file.activity });
             return await serve(res, fs.realpathSync(store.abs(file.path)), true);
           }
+          if (req.method === 'POST' && p === '/api/house/player') {
+            if (!sharing.access().permissions.house) return json(res, 403, { error: '방장이 친구의 집 참여를 껐습니다.' });
+            houseRuntime.personAction(`guest:${identity.guestId}`, await bodyOf(req));
+            return json(res, 200, guestHouseView(identity));
+          }
           if (req.method === 'POST' && p === '/api/house/ballot') {
             if (!sharing.access().permissions.house) return json(res, 403, { error: '방장이 친구의 집 참여를 껐습니다.' });
             houseRuntime.ballot(identity.guestId, await bodyOf(req));
@@ -1236,6 +1354,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           if (req.method === 'POST' && p === '/api/send') return json(res, 200, sendGuest(identity, await bodyOf(req)));
           if (req.method === 'POST' && p === '/api/react') return json(res, 200, reactGuest(identity, await bodyOf(req)));
           if (req.method === 'POST' && p === '/api/play') return json(res, 200, await playAction(identity, await bodyOf(req)));
+          if (req.method === 'POST' && p === '/api/search') return json(res, 200, searchChat(await bodyOf(req), sharing.data.guests[identity.guestId]));
           if (req.method === 'POST' && p === '/api/profile') return json(res, 200, updateProfile(identity, await bodyOf(req)));
           if (req.method === 'POST' && p === '/api/read') return json(res, 200, markRead(identity, (await bodyOf(req)).id));
           if (req.method === 'POST' && p === '/api/summary') return json(res, 200, await summarize(identity, (await bodyOf(req)).since));
@@ -1309,7 +1428,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         return;
       }
       if (req.method === 'GET' && p === '/api/state') return json(res, 200, view());
-      if (req.method === 'GET' && p === '/api/house') return json(res, 200, houseRuntime.view());
+      if (req.method === 'GET' && p === '/api/house') { houseRuntime.enter('user'); return json(res, 200, houseRuntime.view()); }
       if (req.method === 'POST' && p === '/api/house/ballot') return json(res, 200, houseRuntime.ballot('owner', await bodyOf(req)));
       if (req.method === 'GET' && p === '/api/world') return json(res, 200, { ...world.view(),
         avatars: { ...world.avatarView(), ...(player.avatar() ? { user: player.avatar() } : {}) }, player: player.view() });
@@ -1343,9 +1462,16 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           else return json(res, 404, { error: '지원하지 않는 월드 조작입니다.' });
           return json(res, 200, result);
         }
+        if (p === '/api/reset') {
+          if (body.confirm !== '초기화') return json(res, 400, { error: '확인란에 "초기화"를 입력해 주세요.' });
+          try { return json(res, 200, await resetRoom(body.items)); } catch (error) { if (error.status) return json(res, error.status, { error: error.message }); throw error; }
+        }
         if (p === '/api/cancel') {
           active?.controller.abort();
-          await runtime.stop();
+          await runtime.cancel();
+          // What was stopped is not started again: every member counts the messages so far as read.
+          for (const agent of Object.values(runtime.agents)) { agent.seen = Math.max(agent.seen, store.lastId); agent.wakeAt = null; }
+          runtime.save();
           if (active) await active.done;
           return json(res, 200, { ok: true });
         }
@@ -1365,7 +1491,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           if (body.boostMode !== undefined) native.boostMode = room.boostMode = body.boostMode;
           if (typeof body.roomName === 'string') room.roomName = cleanTitle(body.roomName) || cfg.roomName || 'AI 단톡방';
           if (typeof body.userName === 'string') room.userName = cleanTitle(body.userName) || cfg.userName || '방장';
-          if (typeof body.webSearch === 'boolean') room.webSearch = body.webSearch;
+          if (typeof body.webSearch === 'boolean') { room.webSearch = body.webSearch; room.autoSearch = null; }
           if (typeof body.onboarding?.done === 'boolean') room.onboarding.done = body.onboarding.done;
           if (typeof body.tutorial?.done === 'boolean') room.tutorial.done = body.tutorial.done;
           for (const id of IDS) {
@@ -1417,6 +1543,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
         }
         if (p === '/api/play') return json(res, 200, await playAction(identity, body));
         if (p === '/api/read') return json(res, 200, markRead(identity, body.id));
+        if (p === '/api/search') return json(res, 200, searchChat(body));
         if (p === '/api/summary') return json(res, 200, await summarize(identity, body.since));
         if (p.startsWith('/api/push/')) return json(res, 200, pushAction(identity, p, body));
         if (p === '/api/react') {
@@ -1434,7 +1561,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           return json(res, 200, { ok: true, msg: message, house: true });
         }
         if (p === '/api/send') {
-          if (active) return json(res, 409, { error: '진행 중인 토론을 기다리거나 중지해 주세요.' });
+          if (active) return json(res, 409, { error: '토론이 진행 중이에요. 토론이 끝난 뒤에 보내 주세요.' });
           let text = String(body.text ?? '').trim().slice(0, 4000);
           if (!text && !body.image?.data && !body.sticker) return json(res, 400, { error: '메시지를 입력하세요.' });
           const reply = store.byId.get(Number(body.replyTo));
@@ -1467,6 +1594,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           native.lastUserAt = clock();
           const message = post({ from: 'user', text, replyTo: reply?.id, attach,
             workbenchEligible: !!selection || room.webSearch || !!command || /자료|문서|보고서|작성|조사|리서치|제안서|기획서/.test(text) });
+          startAutoSearch(message, selection);
           if (selection) beginDiscussion(message, selection, attach?.upload ? [store.abs(attach.path)] : []);
           else if (attach?.upload) runtime.describeUpload(message);
           if (!native.running && native.sleeping) runtime.start();

@@ -1,6 +1,13 @@
 // Chat cards for polls, the balance game, the quiz battle and bookmarks.
 // The server owns every tally and answer; these cards only render its view and send one action.
 import { esc } from './format.mjs';
+// Card titles use the same line icons as the composer's play buttons.
+const ICON = {
+  poll: 'M5 20V11M12 20V5M19 20v-6M3 20h18',
+  balance: 'M12 4v16M7 20h10M5 7h14M5 7l-2.5 6a2.5 2.5 0 0 0 5 0zM19 7l-2.5 6a2.5 2.5 0 0 0 5 0z',
+  quiz: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4M12 16.5v.5',
+};
+const title = (kind, text) => `<b class="play-title"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[kind]}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>${text}</b>`;
 
 const left = (deadline) => {
   const s = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
@@ -18,7 +25,7 @@ const bar = (count, total) => `<span class="play-bar"><i style="width:${total ? 
 function pollHTML(poll, ctx) {
   const total = poll.counts.reduce((a, b) => a + b, 0), open = poll.status === 'open';
   const voted = poll.mine !== null;
-  return `<header><b>📊 투표</b><span class="play-status">${open ? poll.deadline ? `<span data-play-deadline="${poll.deadline}">${left(poll.deadline)}</span>` : '진행 중' : '마감'}</span></header>
+  return `<header>${title('poll', '투표')}<span class="play-status">${open ? poll.deadline ? `<span data-play-deadline="${poll.deadline}">${left(poll.deadline)}</span>` : '진행 중' : '마감'}</span></header>
     <h4>${esc(poll.question)}</h4>
     <div class="play-options">${poll.options.map((option, i) => `<button type="button" class="play-option ${poll.mine === i ? 'mine' : ''} ${poll.result?.winners.includes(i) ? 'win' : ''}" data-poll-vote="${i}" ${!open || voted ? 'disabled' : ''} aria-pressed="${poll.mine === i}">
       <span class="play-option-top"><b>${esc(option)}</b><span>${poll.counts[i]}표${poll.mine === i ? ' · 내 선택' : ''}</span></span>${bar(poll.counts[i], total)}
@@ -27,17 +34,17 @@ function pollHTML(poll, ctx) {
       <span class="play-actions">${open ? `<button type="button" class="link-btn" data-poll-ask>AI 의견 묻기</button>` : ''}${open && (ctx.owner || poll.by === ctx.person) ? '<button type="button" class="link-btn" data-poll-close>마감하기</button>' : ''}</span></footer>`;
 }
 function balanceHTML(game, ctx) {
-  if (game.status === 'preparing') return `<header><b>⚖️ 밸런스게임</b><span class="play-status">준비 중</span></header><p class="play-wait">AI가 질문을 만드는 중이에요…</p>${ctx.owner ? '<footer><span></span><button type="button" class="link-btn" data-game-end>게임 종료</button></footer>' : ''}`;
+  if (game.status === 'preparing') return `<header>${title('balance', '밸런스게임')}<span class="play-status">준비 중</span></header><p class="play-wait">AI가 질문을 만드는 중이에요…</p>${ctx.owner ? '<footer><span></span><button type="button" class="link-btn" data-game-end>게임 종료</button></footer>' : ''}`;
   const total = game.counts[0] + game.counts[1], open = game.status === 'open';
-  return `<header><b>⚖️ 밸런스게임</b><span class="play-status">${open ? `<span data-play-deadline="${game.deadline}">${left(game.deadline)}</span>` : '결과'}</span></header>
+  return `<header>${title('balance', '밸런스게임')}<span class="play-status">${open ? `<span data-play-deadline="${game.deadline}">${left(game.deadline)}</span>` : '결과'}</span></header>
     <h4>${esc(game.question)}</h4>
     <div class="play-options two">${game.options.map((option, i) => `<button type="button" class="play-option big ${game.mine === i ? 'mine' : ''} ${game.result?.winner === i ? 'win' : ''}" data-game-choose="${i}" ${!open || game.mine !== null ? 'disabled' : ''} aria-pressed="${game.mine === i}">
-      <b>${i ? '🅱️' : '🅰️'} ${esc(option)}</b><span>${game.counts[i]}명</span>${bar(game.counts[i], total)}</button>`).join('')}</div>
+      <b><span class="play-ab">${i ? 'B' : 'A'}</span> ${esc(option)}</b><span>${game.counts[i]}명</span>${bar(game.counts[i], total)}</button>`).join('')}</div>
     <footer><span>${open ? `${game.chosen.length}명 선택 완료${game.mine !== null ? ' · 내 선택 완료' : ''}` : game.endReason === 'done' ? (game.result.winner === null ? '동점!' : `"${esc(game.options[game.result.winner])}" 승!`) : '종료됨'}${game.author ? ` · 출제 ${esc(ctx.nameOf(game.author))}` : ''}</span>
       ${open && ctx.owner ? '<button type="button" class="link-btn" data-game-end>게임 종료</button>' : ''}</footer>`;
 }
 function quizHTML(game, ctx) {
-  const head = `<header><b>🧠 퀴즈 배틀</b><span class="play-status">${game.status === 'open' ? `문제 ${game.index + 1}/${game.total} · <span data-play-deadline="${game.deadline}">${left(game.deadline)}</span>` : game.status === 'preparing' ? '준비 중' : '결과'}</span></header>`;
+  const head = `<header>${title('quiz', '퀴즈 배틀')}<span class="play-status">${game.status === 'open' ? `문제 ${game.index + 1}/${game.total} · <span data-play-deadline="${game.deadline}">${left(game.deadline)}</span>` : game.status === 'preparing' ? '준비 중' : '결과'}</span></header>`;
   if (game.status === 'preparing') return `${head}<p class="play-wait">AI가 5문제를 준비하는 중이에요…</p>${ctx.owner ? '<footer><span></span><button type="button" class="link-btn" data-game-end>게임 종료</button></footer>' : ''}`;
   const last = game.review.at(-1);
   const lastLine = last && game.status === 'open' ? `<p class="play-review">지난 문제 정답: <b>${esc(last.choices[last.answer])}</b>${last.mine ? last.mine.correct ? ` · 정답! +${last.mine.points}점` : ' · 아쉬워요' : ' · 미응답'}</p>` : '';

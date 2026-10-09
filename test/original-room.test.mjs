@@ -145,7 +145,11 @@ test('global stop aborts all three replies and drops late speech, notes and buil
   assert.ok(!s.app.store.messages.some((m) => m.text === 'late'));
   assert.ok(IDS.every((id) => s.app.store.readNote(id) === ''));
   assert.equal(s.app.world.blocks.size, 0);
-  assert.equal(s.app.view().room.auto.on, false);
+  // Stopping ends what is being written now; Talk itself stays on and nobody starts the same message again.
+  assert.equal(s.app.view().room.auto.on, true);
+  const after = s.calls.length;
+  await s.advance(0); await s.advance(12000);
+  assert.equal(s.calls.length, after);
 });
 
 test('AI mention and reply_to wake the addressed peer while pass remains an independent choice', async t => {

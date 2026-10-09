@@ -1,9 +1,12 @@
 import * as THREE from '/vendor/three.module.js';
-import { houseBounds, furnitureParts, roomAt, workerPath, actorActivity } from './house-view.mjs';
+import { houseBounds, furnitureParts, roomAt, workerPath, walkPath, actorActivity } from './house-view.mjs';
 import { createBlockAvatar, animateBlockAvatar } from './house-avatar.mjs';
 import { furniturePose } from './house-pose.mjs';
 
 const COLORS = { claude: '#d97a3a', gpt: '#2f7cf6', gemini: '#5b6cf0', user: '#199b78' };
+const AI_IDS = new Set(['claude', 'gpt', 'gemini']);
+// Friends get a steady colour from their id, like their name colour in the chat.
+const colorOf = (id) => { if (COLORS[id]) return COLORS[id]; let h = 0; for (const c of String(id).slice(6)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h}, 62%, 48%)`; };
 function dispose(group) {
   group.traverse((obj) => {
     obj.geometry?.dispose();
@@ -25,8 +28,11 @@ export class HouseScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color('#efe6d2');
-    this.scene.add(new THREE.HemisphereLight('#fff8e9', '#879c83', 2.4));
-    const sun = new THREE.DirectionalLight('#fff5db', 3);
+    this.hemi = new THREE.HemisphereLight('#fff8e9', '#879c83', 2.4);
+    // Night adds an even fill light so walls, floors and furniture stay easy to read in the dark palette.
+    this.fill = new THREE.AmbientLight('#9fb4ff', 0);
+    this.scene.add(this.hemi, this.fill);
+    const sun = new THREE.DirectionalLight('#fff5db', 3); this.sun = sun;
     sun.position.set(8, 25, 10); sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
     Object.assign(sun.shadow.camera, { left: -25, right: 25, top: 25, bottom: -25, far: 80 });
@@ -40,6 +46,11 @@ export class HouseScene {
     this.reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches || false;
     this.shown = null; this.jobs = []; this.pending = new Map(); // build animation: what is already in place, who is building what
     this.angle = Math.PI / 4; this.elevation = .85; this.zoom = 1; this.follow = null;
+    // view: 'overview' looks down on the house; 'third' and 'first' ride with the followed character.
+    // In every view the ground direction the camera faces is (-sin angle, -cos angle), so arrow keys and the
+    // joystick keep meaning "forward on screen". pitch tilts the rider views; lookOffset turns an AI's view.
+    this.view = 'overview'; this.pitch = -.12; this.ride = 1; this.lookOffset = 0;
+    this.ray = new THREE.Raycaster();
     this.pan = new THREE.Vector3();
     this.bounds = { x: 10, z: 10, span: 20 };
     canvas.addEventListener('webglcontextlost', (e) => {
@@ -120,16 +131,16 @@ export class HouseScene {
       }
       this.previousItems = new Map(data.items.map((item) => [item.id, { ...item }]));
     }
-    const actors = { ...data.agents, ...(data.player ? { user: data.player } : {}) };
+    const actors = { ...data.agents, ...(data.people || {}) };
     for (const id of Object.keys(this.agents)) if (!actors[id]) {
       this.people.remove(this.agents[id].group); dispose(this.agents[id].group); delete this.agents[id];
       if (this.follow === id) { this.follow = null; this.canvas.dispatchEvent(new Event('house-follow-change')); }
     }
     for (const [id, to] of Object.entries(actors)) {
       if (!this.agents[id]) {
-        const rig = createBlockAvatar(THREE, this.mesh.bind(this), COLORS[id] || '#777', id);
+        const rig = createBlockAvatar(THREE, this.mesh.bind(this), colorOf(id), id);
         const { group } = rig;
-        group.position.set(to.x + .5, 0, to.z + .5);
+        group.position.set(to.x + .5, 0, to.z + .5); group.userData.actorId = id;
         this.people.add(group); this.agents[id] = { group, rig };
       }
       const actor = this.agents[id];
@@ -141,46 +152,85 @@ export class HouseScene {
       const action = actorActivity({ job, working: data.workingActor === id,
         moving: actor.group.position.distanceTo(new THREE.Vector3(to.x + .5, 0, to.z + .5)) > .2,
         doing: data.crew?.waiting && data.crew.soloActor === id ? '동료 복귀 대기' : to.doing,
-        paused: id !== 'user' && data.talk === false });
+        paused: AI_IDS.has(id) && data.talk === false });
       actor.action = action;
-      const text = [id === 'user' ? data.userName : data.names[id] || id, action].filter(Boolean).join(' · ');
+      const text = [id === 'user' ? data.userName : data.people?.[id]?.name || data.names[id] || id, action].filter(Boolean).join(' · ');
       if (text !== actor.text) {
         if (actor.label) { actor.group.remove(actor.label); actor.label.material.map.dispose(); actor.label.material.dispose(); }
-        actor.label = this.label(text, COLORS[id] || '#555', 2.4, id === 'user' ? '' : id);
+        actor.label = this.label(text, colorOf(id), 2.4, AI_IDS.has(id) ? id : '');
         actor.label.position.y = 2.75; actor.group.add(actor.label); actor.text = text;
       }
     }
     if (!this.jobs.length) this.latestCompletion = data.log.findLast((l) => l.kind === 'build') || null;
-    const speech = data.log.filter((l) => l.source === 'ai' && l.kind === 'say' && l.speechId);
+    // AI, owner and friend lines all get a bubble over whoever said them (when that character is in the house).
+    const speech = data.log.filter((l) => ['ai', 'user', 'guest'].includes(l.source) && l.kind === 'say' && l.speechId);
     if (this.seenSpeech) for (const message of speech) {
       if (this.seenSpeech.has(message.speechId) || Date.now() - message.at > 30000) continue;
       const actor = this.agents[message.id];
       if (!actor) continue;
       if (actor.bubble) { actor.group.remove(actor.bubble); actor.bubble.material.map.dispose(); actor.bubble.material.dispose(); }
       actor.bubble = this.speechBubble(message.text);
-      actor.bubble.position.y = 4.05; actor.group.add(actor.bubble);
+      // The bubble's bottom edge sits just above the name tag whatever its height.
+      actor.bubble.position.y = 3.15 + actor.bubble.scale.y / 2; actor.group.add(actor.bubble);
       actor.bubbleUntil = performance.now() + 12000;
     }
     this.seenSpeech = new Set(speech.map((l) => l.speechId));
   }
 
+  // The bubble is as wide as its longest line (up to 574px of text) and as tall as its lines (up to 5);
+  // 640 canvas px = 4.8 world units, so short lines make small bubbles at the same text size.
   speechBubble(text) {
-    const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#fffdf4'; ctx.beginPath(); ctx.roundRect(4, 4, 632, 230, 24); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(295, 228); ctx.lineTo(320, 256); ctx.lineTo(345, 228); ctx.fill();
-    ctx.fillStyle = '#1b2638'; ctx.font = '26px sans-serif';
+    const font = '26px sans-serif', padX = 30, lineH = 37, padTop = 18, padBottom = 20, tail = 26;
+    const measure = document.createElement('canvas').getContext('2d'); measure.font = font;
     const lines = []; let line = '';
     for (const char of String(text).slice(0, 200)) {
-      if (ctx.measureText(line + char).width > 574) { lines.push(line); line = ''; }
+      if (char === '\n' || measure.measureText(line + char).width > 574) { lines.push(line); line = ''; if (char === '\n') continue; }
       line += char;
     }
-    if (line) lines.push(line);
-    lines.slice(0, 5).forEach((value, i) => ctx.fillText(value + (i === 4 && lines.length > 5 ? '…' : ''), 30, 44 + i * 37));
+    if (line || !lines.length) lines.push(line);
+    const shown = lines.slice(0, 5).map((value, i) => value + (i === 4 && lines.length > 5 ? '…' : ''));
+    const width = Math.ceil(Math.max(120, ...shown.map((value) => measure.measureText(value).width)) + padX * 2);
+    const box = padTop + shown.length * lineH + padBottom, height = box + tail;
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fffdf4'; ctx.beginPath(); ctx.roundRect(2, 2, width - 4, box - 4, 22); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(width / 2 - 20, box - 4); ctx.lineTo(width / 2, height); ctx.lineTo(width / 2 + 20, box - 4); ctx.fill();
+    ctx.fillStyle = '#1b2638'; ctx.font = font; ctx.textBaseline = 'top';
+    shown.forEach((value, i) => ctx.fillText(value, padX, padTop + 4 + i * lineH));
     const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
-    sprite.scale.set(4.8, 1.92, 1);
+    sprite.scale.set(width * 4.8 / 640, height * 4.8 / 640, 1);
     return sprite;
+  }
+
+  // Day: warm sun on a cream sky. Night: a navy sky and cool moonlight, kept bright enough to see the whole house.
+  setNight(on) {
+    this.night = !!on;
+    this.scene.background.set(on ? '#1a2238' : '#efe6d2');
+    this.hemi.color.set(on ? '#c3cfff' : '#fff8e9'); this.hemi.groundColor.set(on ? '#3c4763' : '#879c83'); this.hemi.intensity = on ? 1.7 : 2.4;
+    this.sun.color.set(on ? '#cdd8ff' : '#fff5db'); this.sun.intensity = on ? 1.5 : 3;
+    this.fill.intensity = on ? .9 : 0;
+  }
+
+  // The character under a screen point (its avatar, label or bubble), or null.
+  pickActor(clientX, clientY) {
+    const rect = this.canvas.getBoundingClientRect();
+    this.ray.far = Infinity;
+    this.ray.setFromCamera(new THREE.Vector2((clientX - rect.left) / rect.width * 2 - 1, 1 - (clientY - rect.top) / rect.height * 2), this.camera);
+    for (const hit of this.ray.intersectObjects(this.people.children, true)) {
+      let obj = hit.object;
+      while (obj && obj.userData.actorId === undefined) obj = obj.parent;
+      if (obj && obj.visible) return obj.userData.actorId;
+    }
+    return null;
+  }
+  // Rider views need someone to ride with; without one they fall back to the overview.
+  setView(view, id = this.follow) {
+    if (view !== 'overview' && !this.agents[id]) view = 'overview';
+    this.view = view; this.follow = view === 'overview' ? this.follow : id;
+    this.pitch = view === 'first' ? -.08 : -.62; this.lookOffset = 0; this.ride = 1; this.rideFrom = null;
+    // Start a rider view looking the way the character faces.
+    if (view !== 'overview') this.angle = this.agents[id].group.rotation.y + Math.PI;
   }
 
   pickRoom(clientX, clientY) {
@@ -282,7 +332,7 @@ export class HouseScene {
     if (changed) this.update(this.data);
   }
 
-  reset() { this.angle = Math.PI / 4; this.elevation = .85; this.zoom = 1; this.pan.set(0, 0, 0); this.follow = null; }
+  reset() { this.angle = Math.PI / 4; this.elevation = .85; this.zoom = 1; this.pan.set(0, 0, 0); this.follow = null; this.view = 'overview'; }
   focusActors(ids) {
     const actors = ids.map((id) => this.agents[id]?.to).filter(Boolean);
     if (!actors.length) return;
@@ -290,11 +340,18 @@ export class HouseScene {
   }
   // Moves the view over a house position (a room, or a spot a member is at) and stops following anyone.
   focusAt(x, z) {
-    this.follow = null;
+    this.follow = null; this.view = 'overview';
     this.pan.set(x - this.bounds.x, 0, z - this.bounds.z);
     this.zoom = .65;
   }
   orbit(dx, dy, pan) {
+    // Riding a character: dragging looks around (an AI keeps walking its own way; the look is an offset on top).
+    if (this.view !== 'overview') {
+      const own = this.follow === 'user' || String(this.follow).startsWith('guest:');
+      if (own) this.angle -= dx * .006; else this.lookOffset -= dx * .006;
+      this.pitch = THREE.MathUtils.clamp(this.pitch - dy * .004, this.view === 'first' ? -1.1 : -1.2, this.view === 'first' ? .7 : -.05);
+      return;
+    }
     if (pan) {
       this.follow = null;
       const scale = this.bounds.span * this.zoom / Math.max(1, this.canvas.clientHeight);
@@ -306,7 +363,43 @@ export class HouseScene {
     }
   }
   magnify(delta) {
-    this.zoom = THREE.MathUtils.clamp(this.zoom * Math.exp(delta * .001), .35, 2.5);
+    if (this.view === 'third') this.ride = THREE.MathUtils.clamp(this.ride * Math.exp(delta * .001), .5, 2.2);
+    else if (this.view === 'overview') this.zoom = THREE.MathUtils.clamp(this.zoom * Math.exp(delta * .001), .35, 2.5);
+  }
+  // The rider camera for the followed character; in third person it is pulled in front of any wall behind it.
+  rideCamera(followed, dt) {
+    const p = followed.group.position, own = this.follow === 'user' || String(this.follow).startsWith('guest:');
+    if (!own) {
+      // An AI's view turns with the AI, smoothly; a look-around drag adds an offset that eases back.
+      const goal = followed.group.rotation.y + Math.PI + this.lookOffset;
+      const diff = Math.atan2(Math.sin(goal - this.angle), Math.cos(goal - this.angle));
+      this.angle += diff * Math.min(1, dt * 3);
+      this.lookOffset *= Math.max(0, 1 - dt * .4);
+    }
+    const forward = new THREE.Vector3(-Math.sin(this.angle), 0, -Math.cos(this.angle));
+    const camera = this.camera;
+    if (this.view === 'first') {
+      const eye = new THREE.Vector3(p.x, p.y + 1.35, p.z);
+      camera.position.copy(eye);
+      camera.lookAt(eye.clone().add(forward.multiplyScalar(Math.cos(this.pitch))).add(new THREE.Vector3(0, Math.sin(this.pitch), 0)));
+      return;
+    }
+    // A wall behind the character first lifts the camera to look over it; only if even a steep view is blocked
+    // is the camera pulled in front of the wall. The camera glides between positions instead of jumping.
+    // A tall phone screen sees less to the sides, so the camera stands further back there.
+    const head = new THREE.Vector3(p.x, p.y + 1.4, p.z), full = 6 * this.ride * Math.max(1, (this.height / this.width) * .7);
+    let goal = null;
+    for (const pitch of [this.pitch, -.9, -1.1, -1.3].filter((v) => v <= this.pitch)) {
+      const back = forward.clone().multiplyScalar(-Math.cos(pitch)).add(new THREE.Vector3(0, -Math.sin(pitch), 0)).normalize();
+      this.ray.set(head, back); this.ray.far = full;
+      const wall = this.ray.intersectObjects(this.structure.children, false).find((hit) => hit.object.position.y > -.1);
+      goal = head.clone().add(back.multiplyScalar(wall ? Math.max(.6, wall.distance - .25) : full));
+      if (!wall) break;
+    }
+    if (!this.rideFrom || this.rideFrom.distanceTo(goal) > 12) this.rideFrom = goal.clone();
+    this.rideFrom.lerp(goal, Math.min(1, dt * 6));
+    camera.position.copy(this.rideFrom);
+    camera.lookAt(head);
   }
   render(now) {
     if (!this.data || this.lost) return;
@@ -322,11 +415,20 @@ export class HouseScene {
       const job = this.jobs.find((j) => j.actor === id);
       if (job) { animateBlockAvatar(rig, now / 1000, job.phase === 'walk'); continue; }
       const placement = furniturePose(this.data, to);
-      const target = placement ? new THREE.Vector3(placement.x, placement.y, placement.z) : new THREE.Vector3(to.x + .5, 0, to.z + .5);
+      // A new destination is walked to cell by cell around walls; with no way through, the member reappears there.
+      if (actor.routeFor !== `${to.x},${to.z}`) {
+        actor.routeFor = `${to.x},${to.z}`;
+        actor.route = walkPath(this.data, group.position, to);
+        if (!actor.route) { group.position.set(to.x + .5, 0, to.z + .5); actor.route = []; }
+      }
+      const step = actor.route[0];
+      const target = step ? new THREE.Vector3(step.x, 0, step.z)
+        : placement ? new THREE.Vector3(placement.x, placement.y, placement.z) : new THREE.Vector3(to.x + .5, 0, to.z + .5);
       const distance = group.position.distanceTo(target);
-      const walking = distance > .02;
-      if (walking) group.rotation.y = Math.atan2(target.x - group.position.x, target.z - group.position.z);
-      group.position.lerp(target, distance ? Math.min(1, dt * 6 / distance) : 1);
+      const walking = distance > .02 || !!step;
+      if (distance > .02) group.rotation.y = Math.atan2(target.x - group.position.x, target.z - group.position.z);
+      group.position.lerp(target, distance ? Math.min(1, dt * (step ? 4 : 6) / distance) : 1);
+      if (step && distance < .08) actor.route.shift();
       if (!walking && placement) group.rotation.y = placement.angle;
       const waving = to.waveUntil > Date.now() || to.pose === 'wave' && to.poseUntil > Date.now();
       animateBlockAvatar(rig, now / 1000, walking, waving ? 'wave' : placement?.pose);
@@ -337,7 +439,14 @@ export class HouseScene {
     }
     // Following a member glides the view over their character.
     const followed = this.follow && this.agents[this.follow];
-    if (followed) {
+    if (this.view !== 'overview' && !followed) this.view = 'overview';
+    // In first person the rider's own body would block the view.
+    for (const [id, actor] of Object.entries(this.agents)) {
+      actor.group.visible = !(this.view === 'first' && id === this.follow);
+      // Riding a character, its own name tag would sit right in front of the camera.
+      if (actor.label) actor.label.visible = !(this.view !== 'overview' && id === this.follow);
+    }
+    if (followed && this.view === 'overview') {
       const p = followed.group.position;
       this.pan.lerp(new THREE.Vector3(p.x - this.bounds.x, 0, p.z - this.bounds.z), Math.min(1, dt * 4));
     }
@@ -345,12 +454,15 @@ export class HouseScene {
     this.renderer.setViewport(0, 0, w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    const target = new THREE.Vector3(this.bounds.x, .4, this.bounds.z).add(this.pan);
-    const distance = this.bounds.span * 1.8 * this.zoom * Math.max(1, h / w);
-    camera.position.copy(target).add(new THREE.Vector3(
-      Math.sin(this.angle) * Math.cos(this.elevation) * distance,
-      Math.sin(this.elevation) * distance, Math.cos(this.angle) * Math.cos(this.elevation) * distance));
-    camera.lookAt(target);
+    if (this.view !== 'overview') this.rideCamera(followed, dt);
+    else {
+      const target = new THREE.Vector3(this.bounds.x, .4, this.bounds.z).add(this.pan);
+      const distance = this.bounds.span * 1.8 * this.zoom * Math.max(1, h / w);
+      camera.position.copy(target).add(new THREE.Vector3(
+        Math.sin(this.angle) * Math.cos(this.elevation) * distance,
+        Math.sin(this.elevation) * distance, Math.cos(this.angle) * Math.cos(this.elevation) * distance));
+      camera.lookAt(target);
+    }
     this.renderer.render(this.scene, camera);
   }
 

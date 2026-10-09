@@ -34,5 +34,5 @@ export const dotCharacters = [
 ];
 export function dotCharacter(index) {
   const rows = dotCharacters[index];
-  return `<svg class="discussion-sprite" width="96" height="96" viewBox="0 0 ${rows[0].length * 4} ${rows.length * 4}" role="img" aria-label="${['Codex', 'Gemini', 'Claude Code'][index]} 도트 캐릭터">${rows.flatMap((row, y) => [...row].map((value, x) => value === '1' ? `<circle cx="${x * 4 + 2}" cy="${y * 4 + 2}" r="1.45"/>` : '')).join('')}</svg>`;
+  return `<svg class="discussion-sprite" width="96" height="96" viewBox="0 0 ${rows[0].length * 4} ${rows.length * 4}" role="img" aria-label="${['ChatGPT', 'Gemini', 'Claude'][index]} 도트 캐릭터">${rows.flatMap((row, y) => [...row].map((value, x) => value === '1' ? `<circle cx="${x * 4 + 2}" cy="${y * 4 + 2}" r="1.45"/>` : '')).join('')}</svg>`;
 }

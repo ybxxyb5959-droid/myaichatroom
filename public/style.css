@@ -719,3 +719,13 @@ select {
 .pwa-help h2 { margin-top: 0; font-size: 18px; }
 .pwa-help p { line-height: 1.7; font-size: 14px; }
 .pwa-help > button { display: block; margin-left: auto; padding: 8px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent); color: white; cursor: pointer; }
+/* shared line icons drawn by format.mjs lineIcon() */
+.line-ic { display: inline-block; width: 1.1em; height: 1.1em; vertical-align: -.2em; flex: none; }
+.line-ic.sm { width: .95em; height: .95em; margin-right: 3px; color: var(--muted, #667); }
+.sys.k-house-news > .line-ic, .sys.k-house-event .line-ic { color: var(--accent); margin-right: 2px; }
+.joint-vote-heading .line-ic, .joint-vote h3 .line-ic, .joint-vote footer .line-ic { margin-right: 6px; color: var(--accent); }
+.joint-choice-title .line-ic { width: 20px; height: 20px; color: var(--accent); }
+.hs-mode .line-ic { width: 13px; height: 13px; margin-right: 3px; vertical-align: -2px; }
+.hs-title { display: inline-flex; align-items: center; gap: 6px; }
+
+html { overflow: hidden; }

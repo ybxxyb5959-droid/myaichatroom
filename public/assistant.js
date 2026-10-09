@@ -1,5 +1,5 @@
 // Personal assistant UI; the existing portraits and group-chat layout are reused.
-import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML, houseEventHTML } from './format.mjs';
+import { esc, renderMarkdown, extractLinks, splitFold, houseNoticeHTML, houseEventHTML, lineIcon } from './format.mjs';
 import { voteCardHTML, bindVoteCard, updateVoteClocks } from './joint-vote.mjs';
 import { memberStatus, latestCall, limitWindows, batteryLevel } from './status.mjs';
 import { createDiscussionStage } from './discussion-stage.mjs';
@@ -26,10 +26,9 @@ $('#ownerMore').addEventListener('keydown', event => { if (event.key === 'Escape
 const IDS = ['gemini', 'gpt', 'claude'];
 const PHASES = { answer: '답변', opinion: '독립 의견', review: '교차 검토', selection: '최종 답변 AI 선정 중', final: '최종 정리' };
 const STEPS = ['opinion', 'review', 'selection', 'final'];
-const SOURCES = { cli: { gpt: 'ChatGPT가 알려 준 목록', claude: 'Claude에 포함' }, help: 'Claude 도움말', config: '앱 기본·추천', custom: '직접 입력' };
 const LIST_NOTE = {
   gpt: '이 컴퓨터의 ChatGPT가 알려 준 모델 목록이에요. 내 계정에서 실제로 되는지는 직접 써 봐야 알 수 있어요.',
-  claude: '가벼운 모델일수록 빠르고 사용량을 덜 써요. haiku는 가장 가볍고, sonnet은 균형형, opus는 가장 똑똑하지만 사용량이 많아요.',
+  claude: '가벼운 모델일수록 빠르고 사용량을 덜 써요. Haiku가 가장 가볍고, Sonnet은 균형형, Opus·Fable은 가장 똑똑하지만 사용량이 많아요.',
   gemini: 'Gemini 이름 끝의 low·medium·high는 생각을 얼마나 깊게 할지예요. low가 가장 가볍고 사용량이 적어요.',
 };
 // How to get each AI connected, in plain steps (Windows). The commands come from setup.mjs.
@@ -53,11 +52,10 @@ const TOUR = [
   { sel: '#modelPicker', title: '누가 답할지, 어떤 모델인지', text: '참여할 AI를 켜고 끄고, AI들의 “모델”을 바꿀 수 있어요. 사용량에 따라 조절해보세요.' },
   { sel: '#recipientHint', title: '자율 대화', text: '대표 답변자를 뽑지 않아요. 각 AI가 따로 읽고 답하며, @이름이나 답장은 그 AI가 먼저 읽게 해요. 다른 AI도 참여할 수 있어요.' },
   { sel: '#debateSwitch', title: '토론 모드', text: '중요한 결정을 할때, AI들이 각자 의견을 내고, 서로 검토한 뒤, 하나의 결론으로 정리해 줘요. 시간이 더 걸리고 한도소모가 클 수 있어요.' },
-  { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 사용자 메시지와 동료의 말에 각자 반응해요. 최대 3개의 호출이 동시에 진행돼요. 끄면 진행 중인 일반 대화도 중단해요.' },
-  { sel: '#boostSeg', side: true, title: '⚡ 진심모드', text: '복잡한 요청은 더 강한 모델로 생각해요. 자동·부를 때만·끔을 선택할 수 있어요. 대화 속도는 바뀌지 않아요.' },
+  { sel: '#chatterBtn', title: 'Talk on / off', text: '켜 두면 AI들이 서로 말을 주고받으며 자유롭게 대화해요. 꺼도 내 질문에는 계속 답하고, AI끼리의 자동 대화만 멈춰요.' },
   { sel: '#meEdit', side: true, title: '이름 바꾸기', text: 'AI들은 내 이름을 기억해요.' },
   { sel: '#webSearchField', title: '인터넷 검색', text: 'AI가 인터넷에서 찾아보고 답해요. 모든 AI가 지원하는 건 아니니, 켠 뒤 나오는 안내를 확인하세요.' },
-  { sel: '#guideButtons', side: true, title: '설정은 언제든 다시', text: 'AI 연결과 모델 설정, 사용법은 여기서 언제든 다시 열 수 있어요.' },
+  { sel: '#settingsBtn', side: true, title: '설정', text: '채팅 빈도·AI 참여 강도·진심모드(복잡한 요청은 더 강한 모델로 생각해요)·자동 잠들기를 여기서 바꿔요. AI 연결과 모델 설정, 사용법도 여기서 언제든 다시 열 수 있어요.' },
 ];
 
 let state;
@@ -72,6 +70,22 @@ const replyChip = document.createElement('button');
 replyChip.type = 'button'; replyChip.className = 'reply-quote'; replyChip.hidden = true;
 replyChip.setAttribute('aria-label', '답장 취소');
 const messageKey = () => JSON.stringify([state.messages.map((m) => [m.id, m.reactions]), state.room.active?.id, state.play?.polls, state.play?.games, state.play?.bookmarks]);
+// While a discussion runs nobody can send: the input says so and stays closed until it ends.
+function lockComposer(locked) {
+  const input = $('#input');
+  input.disabled = locked;
+  input.placeholder = locked ? '토론이 진행 중이에요' : state.room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요' : '채팅을 입력하세요.';
+  $('.composer').classList.toggle('locked', locked);
+  $('#attachBtn').disabled = locked;
+}
+function typingLine(box, writers) {
+  const text = writers.length ? `${writers.map((m) => m.name).join(', ')} 입력 중...` : '';
+  box.classList.toggle('on', !!text);
+  if (box.dataset.text === text) return;
+  box.dataset.text = text;
+  // A green-outlined pill: the members' pictures and names stay still; only 입력 중... ripples.
+  box.innerHTML = text ? `<span class="typing-pill" aria-label="${esc(text)}"><span class="tp-faces">${writers.map((m) => avatar(m.id)).join('')}</span><b>${esc(writers.map((m) => m.name).join(', '))}</b>${wave('입력 중...')}</span>` : '';
+}
 const wave = (text) => `<span class="typing-wave" aria-label="${esc(text)}">${[...text].map((c, i) => `<span aria-hidden="true" style="--i:${i}">${esc(c)}</span>`).join('')}</span>`;
 const runOpen = new Map(); // discussion runs the user opened or closed by hand
 const input = $('#input');
@@ -102,6 +116,7 @@ function chatVoteNode(message) {
     const current = node.isConnected ? node : document.querySelector(`[data-vote-id="${CSS.escape(message.voteId)}"]`);
     current?.replaceWith(updated);
     updated.querySelector('.chat-vote-card').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
   });
   node.querySelector('[data-decline]')?.addEventListener('click', () => {
     if (!vote) return;
@@ -233,9 +248,18 @@ function messageNode(m) {
       node.innerHTML = houseEventHTML(m.text, m.houseEvent?.id);
       return node;
     }
+    // Automatic web search: shown as the answering member's short notice, marked as an automatic one.
+    if (m.kind === 'auto-search') {
+      node.className = 'sys k-auto-search';
+      const who = member(m.by);
+      if (who) node.style.setProperty('--c', who.color);
+      node.innerHTML = `${who ? avatar(m.by) : ''}<span class="as-bubble"><b>${esc(nameOf(m.by))}</b> ${esc(m.text)}</span><small>자동 안내</small>`;
+      return node;
+    }
     if (m.kind === 'house-news') {
       node.className = 'sys k-house-news';
-      node.innerHTML = `<span>${esc(m.text)}</span><button type="button" class="house-event-link" data-house-open>집짓기 보기</button>`;
+      // Older notices began with an emoji; the line icon replaces it.
+      node.innerHTML = `${lineIcon('house')}<span>${esc(m.text.replace(/^\p{Extended_Pictographic}️?\s*/u, ''))}</span><button type="button" class="house-event-link" data-house-open>집짓기 보기</button>`;
       return node;
     }
     if (m.kind === 'house-build') {
@@ -290,7 +314,7 @@ function messageNode(m) {
     const quote = document.createElement('button');
     quote.type = 'button'; quote.className = 'reply-quote';
     quote.textContent = `${m.replyPreview.name || nameOf(m.replyPreview.from)}에게 답장 · ${m.replyPreview.text}`;
-    quote.onclick = () => document.querySelector(`[data-id="${Number(m.replyTo)}"]`)?.scrollIntoView({ block: 'center' });
+    quote.onclick = () => jumpTo(Number(m.replyTo));
     bubble.prepend(quote);
   }
   if (m.autoPick) {
@@ -299,7 +323,7 @@ function messageNode(m) {
     node.querySelector('.m-body').append(note);
   }
   const actions = document.createElement('div'); actions.className = 'chat-actions';
-  const answer = document.createElement('button'); answer.type = 'button'; answer.textContent = '답장';
+  const answer = document.createElement('button'); answer.type = 'button'; answer.className = 'reply-btn'; answer.textContent = '답장';
   answer.onclick = () => {
     replyTo = m.id; replyChip.textContent = `${authorName(m)}에게 답장 · ${(m.text || '').slice(0, 100)} ×`;
     replyChip.hidden = false; input.before(replyChip); input.focus();
@@ -308,7 +332,7 @@ function messageNode(m) {
   const saved = state.play?.bookmarks?.includes(m.id);
   const mark = document.createElement('button'); mark.type = 'button'; mark.className = 'bookmark-btn';
   mark.textContent = saved ? '★ 저장됨' : '☆ 저장'; mark.setAttribute('aria-pressed', String(!!saved));
-  mark.title = saved ? '명장면 저장 취소' : '명장면으로 저장';
+  mark.title = saved ? '저장 취소' : '이 메시지 저장';
   mark.onclick = () => playAct({ action: 'bookmark.toggle', id: m.id }).catch(() => {});
   actions.append(mark);
   const picker = document.createElement('details'); picker.className = 'reaction-picker';
@@ -359,7 +383,12 @@ function jumpTo(id) {
   const node = document.querySelector(`#msgs [data-id="${id}"]`);
   if (!node) return false;
   node.closest('details')?.setAttribute('open', '');
-  node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // Only the timeline scrolls: scrollIntoView would also push the whole page (header, search bar) out of view.
+  // A jump means the reader is looking up there: new messages must not pull the view back down for a while.
+  holdUntil = Date.now() + 4000;
+  const top = node.getBoundingClientRect().top - tl.getBoundingClientRect().top + tl.scrollTop - (tl.clientHeight - node.offsetHeight) / 2;
+  tl.scrollTo({ top: Math.max(0, top), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
   node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 1600);
   return true;
 }
@@ -376,7 +405,7 @@ function renderSaved() {
     };
     li.querySelector('.link-btn').onclick = async () => { await playAct({ action: 'bookmark.toggle', id: item.id }).catch(() => {}); renderSaved(); };
     return li;
-  }) : [Object.assign(document.createElement('li'), { className: 'saved-empty', textContent: '아직 저장한 명장면이 없어요. 메시지 아래 ☆ 저장을 눌러 보세요.' })]));
+  }) : [Object.assign(document.createElement('li'), { className: 'saved-empty', textContent: '아직 저장한 메시지가 없어요. 메시지 아래 ☆ 저장을 눌러 보세요.' })]));
 }
 // ---------- continue a substantial answer on the workbench (owner only; the click calls no AI) ----------
 const STRUCTURED = /^#{1,3} |^\s*\d+\.\s|^\s*[-*]\s|```|\|.+\|/m;
@@ -415,6 +444,36 @@ function runFooter(end) {
   div.innerHTML = `<span>${s.ok ? '완료' : '최종 답변을 완료하지 못했습니다'}</span>${chips.join('')}`;
   return div;
 }
+// The process reads as two parts: everyone's own opinion, then the reviews. Each reviewer read every other
+// opinion at once (lib/discussion.mjs), so a review is labelled with all of those authors, not one.
+const STEP_TITLES = { opinion: '1. 각자 의견', review: '2. 검토' };
+function processNodes(steps) {
+  const authors = [...new Set(steps.filter((m) => m.phase === 'opinion' && member(m.from)).map((m) => m.from))];
+  const out = [];
+  let part = null;
+  for (const m of steps) {
+    if (STEP_TITLES[m.phase] && m.phase !== part) {
+      part = m.phase;
+      const title = document.createElement('p'); title.className = 'run-divider'; title.textContent = STEP_TITLES[part];
+      out.push(title);
+    }
+    const node = messageNode(m);
+    if (node.classList.contains('msg') && STEP_TITLES[m.phase]) {
+      node.classList.add('run-step', `step-${m.phase}`);
+      node.querySelector('.m-head .phase')?.remove();
+      const peers = authors.filter((id) => id !== m.from);
+      if (m.phase === 'review' && peers.length) {
+        const about = document.createElement('small'); about.className = 'review-of';
+        about.textContent = `↪ ${peers.map(nameOf).join(' · ')} 의견 검토`;
+        node.querySelector('.line').before(about);
+      }
+      // Reply / save / react stay out of the way until the message is hovered, focused or tapped.
+      node.addEventListener('click', (e) => { if (!e.target.closest('a, button, summary, details')) node.classList.toggle('show-actions'); });
+    }
+    out.push(node);
+  }
+  return out;
+}
 // One discussion = header, collapsible process, highlighted final answer, footer.
 function runNode({ runId, msgs }) {
   const node = document.createElement('section');
@@ -434,8 +493,8 @@ function runNode({ runId, msgs }) {
   details.className = 'run-process';
   const byDefault = running || !final;
   details.open = runOpen.has(runId) ? runOpen.get(runId) : byDefault;
-  details.innerHTML = `<summary>토론 과정 · 의견 ${count('opinion')} · 검토 ${count('review')}${errors ? ` · 오류 ${errors}` : ''}</summary>`;
-  details.append(...steps.map(messageNode));
+  details.innerHTML = `<summary><span class="run-faces">${people.map((m) => avatar(m.from)).join('')}</span>토론 과정 · 의견 ${count('opinion')} · 검토 ${count('review')}${errors ? ` · 오류 ${errors}` : ''}</summary>`;
+  details.append(...processNodes(steps));
   details.addEventListener('toggle', () => {
     if (details.open === byDefault) runOpen.delete(runId); else runOpen.set(runId, details.open);
   });
@@ -516,19 +575,22 @@ async function openSummary() {
   } catch (e) { $('#summaryBody').innerHTML = `<p class="joint-vote-error">${esc(e.message)}</p>`; }
 }
 function showJump(text) { $('#jump').textContent = text; $('#jump').hidden = false; }
+let holdUntil = 0;
 function refreshMessages(grew) {
-  const stick = distance() < 100;
+  const stick = distance() < 100 && Date.now() > holdUntil && !search.q;
   renderMessages();
+  if (search.q) searchHighlight();
   if (stick) tl.scrollTop = tl.scrollHeight;
   else if (grew) showJump(unreadCount() ? `새 메시지 ${unreadCount()}개 ↓` : '새 메시지 ↓');
   maybeMarkRead();
 }
 function applyState(next) {
-  const before = state?.messages.length || 0;
+  const before = state?.messages.length || 0, wasDiscussing = !!state?.room?.active;
   state = next;
   if (guest) state.room = next.sharedRoom;
   const key = messageKey();
   if (key !== renderedKey) refreshMessages(state.messages.length > before);
+  if (wasDiscussing && !(guest ? next.sharedRoom : next.room)?.active && distance() >= 100) showJump('답변이 완료되었어요 ↓');
   renderControls();
   if (guest) { renderFiles(); if (profileId) renderProfile(); return; }
   renderFiles();
@@ -545,13 +607,14 @@ function stateClass(s) {
   return { '생성 중': 'busy', 완료: 'ok', 실패: 'fail', 제외: 'off' }[s.status] || 'wait';
 }
 function renderProgress() {
-  const stick = distance() < 100;
+  const stick = distance() < 100 && Date.now() > holdUntil && !search.q;
   renderDiscussionStage(state.room);
   if (stick) tl.scrollTop = tl.scrollHeight;
   const a = state.room.active?.mode === 'discussion' ? state.room.active : null;
   const box = $('#typing');
-  box.classList.toggle('on', !!a);
-  if (!a) { box.replaceChildren(); return; }
+  // Outside a discussion, whoever is writing shows above the input as a rippling "… 입력 중...".
+  if (!a) { typingLine(box, state.members.filter((m) => m.writing)); return; }
+  box.classList.add('on'); box.dataset.text = 'discussion';
   const entries = Object.entries(a.states);
   const chips = entries.map(([id, s]) => `<span class="pg-ai ${stateClass(s)} ${s.phase === 'review' ? 'debating' : ''}" style="--c:${member(id).color}">${avatar(id)}<b>${esc(nameOf(id))}</b> ${s.status === '생성 중' ? wave('토론하는 중...') : esc(s.status)}${s.kind ? ` · ${esc(kindText(s.kind))}` : ''}${s.reason ? ` · ${esc(s.reason)}` : ''}${a.synthesizer === id ? ' <em>종합</em>' : ''}</span>`).join('');
   const reached = Math.max(0, ...entries.filter(([, s]) => !['대기', '제외'].includes(s.status)).map(([, s]) => STEPS.indexOf(s.phase)));
@@ -720,6 +783,8 @@ function renderControls() {
   document.title = room.name || 'AI 단톡방';
   $('#webSearch').checked = room.webSearch;
   $('#webSearchField').classList.toggle('on', room.webSearch);
+  $('#webSearchField').classList.toggle('auto', !!room.autoSearch);
+  $('#webSearchField').title = room.autoSearch ? '최신 정보가 필요한 질문이라 자동으로 켰어요. 답변이 끝나면 다시 꺼져요.' : '검색 지원은 CLI마다 다릅니다. 답변의 출처를 확인하세요.';
   $('#webHint').hidden = !room.webSearch; // the note about search support only matters once it is on
   $('#input').placeholder = room.discussion ? '조사할 내용 또는 복잡한 추론을 물어보세요' : '채팅을 입력하세요.';
   renderRoomSub();
@@ -742,8 +807,9 @@ function renderControls() {
   $('#debateSwitch').setAttribute('aria-disabled', String(!!room.active));
   $('#debateSwitch').classList.toggle('on', room.discussion);
   schedulePreview();
-  $('#send').disabled = busy;
-  $('#stop').hidden = !room.active && !room.autoRunning;
+  $('#send').disabled = busy || !!room.active;
+  lockComposer(!!room.active);
+  $('#stop').hidden = !room.active;
   const chatter = $('#chatterBtn');
   chatter.classList.toggle('on', room.auto.on);
   chatter.setAttribute('aria-pressed', String(room.auto.on));
@@ -760,8 +826,7 @@ function renderGuestControls() {
   $('#chatFrequencyField').hidden = true; $('#chatFrequencyHint').hidden = true;
   $('#members').innerHTML = state.members.map(m => `<li class="member ${m.busy ? 'st-typing' : !m.available || !m.enabled ? 'st-off' : ''}" style="--c:${m.color}">
     <div class="av-wrap" data-profile="${m.id}" role="button" tabindex="0" aria-label="${esc(m.name)} 프로필 보기"><img class="av" src="/avatars/${m.id}-pixel-128.png" alt=""><span class="st-dot"></span></div>
-    <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div><div class="m-status">${esc(m.busy ? '입력·작업 중' : m.available && m.enabled ? '참여 중' : '쉬는 중')}</div></div>
-    <label class="switch" title="참여 상태 · 방장 관리"><input type="checkbox" disabled ${m.available && m.enabled ? 'checked' : ''}><span></span></label></li>`).join('');
+    <div class="m-info"><div class="m-name"><span class="n">${esc(m.name)}</span><span class="m-maker">${esc(m.maker)}</span></div><div class="m-status">${esc(m.busy ? '입력·작업 중' : m.available && m.enabled ? '참여 중' : '쉬는 중')}</div></div></li>`).join('');
   renderHumans();
   const here = (state.participants || []).filter(p => p.online).length + state.members.filter(m => m.available && m.enabled).length;
   $('#memberCount').textContent = $('#headCount').textContent = String(here);
@@ -808,9 +873,10 @@ function renderGuestControls() {
   gauge.setAttribute('role', 'meter'); gauge.setAttribute('aria-label', '내 AI 남은 한도');
   gauge.setAttribute('aria-valuemin', '0'); gauge.setAttribute('aria-valuemax', String(allowance || 1));
   gauge.setAttribute('aria-valuenow', String(remaining)); gauge.setAttribute('aria-valuetext', `잔여 ${remaining}회, 배정 ${allowance}회`);
-  $('#typing').classList.toggle('on', !!room.active);
-  $('#typing').innerHTML = room.active ? wave(`${room.active.startedBy || '방장'}가 토론을 열고 있어요…`) : esc(state.members.filter(m => m.busy).map(m => `${m.name} 입력·작업 중…`).join(' · '));
-  $('#send').disabled = pending || !!room.active && guestDiscussion || state.permissions?.chat === false;
+  if (room.active) { $('#typing').classList.add('on'); $('#typing').dataset.text = 'discussion'; $('#typing').innerHTML = wave(`${room.active.startedBy || '방장'}가 토론을 열고 있어요…`); }
+  else typingLine($('#typing'), state.members.filter((m) => m.writing));
+  $('#send').disabled = pending || !!room.active || state.permissions?.chat === false;
+  lockComposer(!!room.active);
   $('#loadMore').hidden = true;
   $('#stop').hidden = true;
 }
@@ -969,23 +1035,33 @@ async function openFile(path) {
 function fallbackEfforts(id) {
   return id === 'claude' ? state.catalog.claude.models[0].efforts : id === 'gpt' ? ['low', 'medium', 'high'] : [];
 }
+// Short traits from what the name or the CLI's own description says; ChatGPT model names are not guessed from.
+function modelTraits(id, m) {
+  const name = `${m.id} ${m.label}`.toLowerCase(), about = (m.description || '').toLowerCase();
+  const light = id === 'gpt' ? /affordable|efficient|fast|cheap|small/.test(about) : /haiku|flash-low|-low$|lite|mini/.test(name);
+  const deep = id === 'gpt' ? /frontier|most capable|deep|complex|hardest/.test(about) : /opus|fable|-high$|pro\b/.test(name);
+  const balanced = id !== 'gpt' && /sonnet|-medium$/.test(name);
+  return light ? ['빠름', '사용량 적음'] : deep ? ['깊게 생각', '사용량 많음'] : balanced ? ['균형'] : [];
+}
 function chooserHTML(d) {
   const cat = state.catalog[d.id];
   const rec = d.target === 'general' ? state.room.recommended?.[d.id]?.model : null;
   const rank = (m) => (m.check?.status === 'ok' ? 0 : m.id === rec ? 1 : m.id === d.saved ? 2 : ['config', 'custom'].includes(m.source) ? 4 : 3);
   const list = [...cat.models].sort((a, b) => rank(a) - rank(b));
-  const shown = d.more ? list : list.slice(0, 4);
+  const shown = d.more ? list : list.slice(0, 6);
   const current = list.find((m) => m.id === d.model);
   if (current && !shown.includes(current)) shown.push(current);
   const items = shown.map((m) => {
-    const source = m.source === 'cli' ? SOURCES.cli[d.id] : SOURCES[m.source];
-    const check = m.check?.status === 'ok' ? '<span class="tag ok">사용 확인됨</span>'
-      : m.check?.status === 'fail' ? `<span class="tag fail">최근 실패 · ${esc(kindText(m.check.kind))}</span>` : '<span class="tag">아직 안 써 봤어요</span>';
-    return `<button type="button" class="model-opt ${m.id === d.model && !d.custom ? 'on' : ''}" data-model="${esc(m.id)}">
+    const check = m.check?.status === 'ok' ? '<span class="tag ok">✓ 사용 가능</span>'
+      : m.check?.status === 'fail' ? `<span class="tag fail">안 됨 · ${esc(kindText(m.check.kind))}</span>` : '<span class="tag">확인 전</span>';
+    return `<button type="button" class="model-opt ${m.id === d.model && !d.custom ? 'on' : ''}" data-model="${esc(m.id)}" title="${esc([m.id, m.description].filter(Boolean).join(' · '))}">
       <span class="mo-top"><b>${esc(m.label)}</b>${m.label !== m.id ? `<code>${esc(m.id)}</code>` : ''}${m.id === rec ? '<span class="tag rec">추천 · 사용량 가장 적음</span>' : ''}</span>
       ${m.description ? `<span class="mo-desc">${esc(m.description)}</span>` : ''}
-      <span class="mo-meta"><span class="tag src">${esc(source)}</span>${check}</span></button>`;
+      <span class="mo-meta">${modelTraits(d.id, m).map((t) => `<span class="tag trait">${t}</span>`).join('')}${check}</span></button>`;
   }).join('');
+  const picked = cat.models.find((m) => m.id === d.model);
+  const testHTML = d.model ? `<div class="mo-test"><button type="button" class="model-pill" data-act="test" title="선택한 모델에 짧은 질문을 한 번 보내 봐요. 구독 사용량이 조금 쓰여요">${picked?.check?.status === 'ok' ? '✓ 사용 가능 · 다시 확인' : picked?.check?.status === 'fail' ? '안 됨 · 다시 확인' : '선택한 모델 확인하기 · 호출 1회'}</button>
+    <small>${picked?.check?.status === 'ok' ? '이 계정에서 쓸 수 있어요.' : picked?.check?.status === 'fail' ? '이 계정에서 안 됐어요. 다른 모델을 골라 보세요.' : '내 계정에서 되는지 짧은 호출 1회로 확인해요.'}</small></div>` : '';
   const note = d.id === 'gpt' && !cat.listedAt
     ? `ChatGPT 모델 목록을 아직 못 불러왔어요. <button type="button" class="link-btn" data-act="refresh">목록 불러오기 (사용량 안 써요)</button>`
     : esc(LIST_NOTE[d.id]);
@@ -997,10 +1073,10 @@ function chooserHTML(d) {
     : d.effort ? `<p class="hint">생각 수준 ${esc(d.effort)} — 이 모델에서 지원 여부를 아직 확인하지 못했습니다.</p>` : '';
   return `<p class="hint list-note">${note}</p><div class="model-list">${items}</div>
     ${list.length > shown.length ? `<button type="button" class="link-btn" data-act="more">모델 더 보기 (${list.length - shown.length}개)</button>` : ''}
-    ${effortHTML}
+    ${effortHTML}<div class="mo-foot">${testHTML}
     <details class="advanced" ${d.custom ? 'open' : ''}><summary>고급 설정 · 모델 ID 직접 입력</summary>
       <input data-act="custom" value="${esc(d.custom ? d.model : '')}" placeholder="예: ${esc(cat.models[0]?.id || '')}" maxlength="120" spellcheck="false" aria-label="모델 ID 직접 입력">
-      <p class="hint">CLI에서 확인한 모델 ID를 입력하면 목록 선택보다 우선합니다. 사용 가능 여부는 호출 테스트로 확인하세요.</p></details>`;
+      <p class="hint">CLI에서 확인한 모델 ID를 입력하면 목록 선택보다 우선합니다. 사용 가능 여부는 호출 테스트로 확인하세요.</p></details></div>`;
 }
 function bindChooser(root, d, rerender) {
   root.querySelectorAll('[data-model]').forEach((b) => b.addEventListener('click', () => {
@@ -1011,6 +1087,10 @@ function bindChooser(root, d, rerender) {
   }));
   root.querySelectorAll('[data-effort]').forEach((b) => b.addEventListener('click', () => { d.effort = b.dataset.effort; rerender(); }));
   root.querySelector('[data-act="more"]')?.addEventListener('click', () => { d.more = true; rerender(); });
+  root.querySelector('[data-act="test"]')?.addEventListener('click', (e) => {
+    e.target.disabled = true; e.target.textContent = '확인 중…';
+    testCall(d.id, d.target, d.model, d.effort);
+  });
   root.querySelector('[data-act="refresh"]')?.addEventListener('click', async (e) => {
     e.target.disabled = true; e.target.textContent = '불러오는 중…';
     try { applyState(await api('/api/models/refresh', { id: d.id })); } catch (err) { toast(err.message); }
@@ -1188,6 +1268,9 @@ function openSetup() {
     models: Object.fromEntries(IDS.map((id) => [id, { ...(first && state.room.recommended?.[id] ? state.room.recommended[id] : state.room.models[id]) }])) };
   $('#setup').hidden = false;
   renderSetup();
+  // The login check calls no AI, so it runs by itself instead of waiting for a button.
+  setup.autoCheck = true;
+  api('/api/check/login', {}).then(applyState).catch(() => {}).finally(() => { if (setup) { setup.autoCheck = false; renderSetup(); } });
 }
 function renderSetup() {
   const s = setup;
@@ -1198,7 +1281,7 @@ function renderSetup() {
   $('#setupSteps').querySelectorAll('li').forEach((li, i) => { li.className = i + 1 < s.step ? 'done' : i + 1 === s.step ? 'now' : ''; });
   if (s.step === 1) {
     body.innerHTML = `<h2 id="setupTitle">AI 연결하기</h2>
-      <p>이 앱은 <b>내 컴퓨터에 설치되고 로그인된 AI</b>를 그대로 불러 써요. 비밀번호나 키를 입력할 필요가 없어요. 아래 <b>[연결 확인하기]</b>를 누르면 어떤 AI가 준비됐는지 알려 줘요. <b>사용량은 쓰지 않아요.</b></p>
+      <p>이 앱은 <b>내 컴퓨터에 설치되고 로그인된 AI</b>를 그대로 불러 써요. 비밀번호나 키를 입력할 필요가 없어요. 창을 열면 어떤 AI가 준비됐는지 <b>자동으로 확인</b>해요. <b>사용량은 쓰지 않아요.</b>${s.autoCheck ? ' <span class="cs busy">확인 중…</span>' : ''}</p>
       <div class="conn-table">${IDS.map((id) => {
         const cs = connState(id);
         const c = CONNECT[id];
@@ -1208,8 +1291,8 @@ function renderSetup() {
           ? `<details class="cr-more" ${cs.key === 'install' ? '' : 'open'}><summary>어떻게 하나요?</summary><ol class="how">
               <li>${esc(c.need)}</li>
               ${cs.key === 'install' ? `<li>키보드의 <b>Windows 키</b>를 누르고 <b>PowerShell</b>을 검색해서 열어요.</li>
-              <li>아래 줄을 복사해서 붙여넣고 Enter를 눌러요.<code class="cmd">${esc(c.install)}</code></li>` : ''}
-              <li>${id === 'gemini' ? `PowerShell에 <code>agy</code>를 입력하면 브라우저가 열려요. 구독 중인 Google 계정으로 로그인해요.` : `PowerShell에 <code>${esc(c.login)}</code>를 입력해서 로그인해요.`}</li>
+              <li>아래 줄을 <b>[복사]</b>해서 붙여넣고 Enter를 눌러요.<span class="cmd-row"><code class="cmd">${esc(c.install)}</code><button type="button" class="model-pill" data-copy="${esc(c.install)}">복사</button></span></li>` : ''}
+              <li>${id === 'gemini' ? `PowerShell에 <code>agy</code>를 입력하면 브라우저가 열려요. 구독 중인 Google 계정으로 로그인해요.` : `PowerShell에 아래 줄을 붙여넣어 로그인해요.<span class="cmd-row"><code class="cmd">${esc(c.login)}</code><button type="button" class="model-pill" data-copy="${esc(c.login)}">복사</button></span>`}</li>
               <li>끝나면 이 앱을 껐다가 다시 켜요. (<b>start.bat</b>)</li></ol>
               <p class="hint">더 쉬운 방법: 프로젝트 폴더의 <b>setup.bat</b>을 더블클릭하면 설치를 도와줘요.</p></details>` : '';
         const test = cs.key === 'unknown' ? `<button type="button" class="model-pill" data-test="${id}" title="짧은 질문을 한 번 보내 봐요. 사용량이 조금 쓰여요">말 걸어 보기</button>` : '';
@@ -1219,8 +1302,14 @@ function renderSetup() {
           ${how}
           <details class="cr-more"><summary>자세한 상태 보기</summary><div class="conn-line">${connBadges(id, room.models[id].model)}</div>${detail ? `<div class="cr-detail">${esc(detail)}</div>` : ''}</details></div>${test}</div>`;
       }).join('')}</div>
-      <div class="cost-note"><b>[연결 확인하기]</b>는 사용량이 들지 않아요. <b>[말 걸어 보기]</b>는 짧은 질문을 한 번 보내서 <b>구독 사용량이 조금 쓰여요</b>. 둘 다 안 해도 바로 시작할 수 있어요. 연결이 안 된 AI는 쉬고, 나머지만 대화해요.</div>`;
-    acts.innerHTML = '<button type="button" class="model-pill" data-act="skip">나중에 하기</button><span class="grow"></span><button type="button" class="model-pill" data-act="login">연결 확인하기</button><button type="button" class="model-pill primary" data-act="next">다음</button>';
+      <ul class="cost-note cost-list">
+        <li>연결 확인은 사용량이 들지 않아요.</li>
+        <li>‘말 걸어 보기’는 짧은 질문을 한 번 보내요. 구독 사용량이 조금 들어요.</li>
+        <li>연결되지 않은 AI는 쉬고, 연결된 AI끼리 대화해요. 확인 없이 바로 시작해도 돼요.</li></ul>`;
+    acts.innerHTML = '<button type="button" class="model-pill" data-act="skip">나중에 하기</button><span class="grow"></span><button type="button" class="model-pill" data-act="login">다시 확인</button><button type="button" class="model-pill primary" data-act="next">다음</button>';
+    body.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨 ✓'; } catch { toast('명령을 직접 선택해서 복사해 주세요.'); }
+    }));
     body.querySelectorAll('[data-test]').forEach((b) => b.addEventListener('click', () => {
       b.disabled = true; b.textContent = '확인 중…';
       const m = setup.models[b.dataset.test];
@@ -1234,30 +1323,36 @@ function renderSetup() {
     }
     // Until a choice is touched, the recommendation follows what the app knows.
     if (s.firstRun) for (const id of IDS) if (!s.touched.has(id) && room.recommended?.[id]) s.models[id] = { ...room.recommended[id] };
+    // One AI at a time behind tabs, so this step stays about as tall as the other two.
+    s.tab = IDS.includes(s.tab) ? s.tab : IDS[0];
+    for (const id of IDS) {
+      const cur = s.models[id];
+      s.drafts[id] = { id, target: 'general', model: cur.model, effort: cur.effort, saved: cur.model, custom: false, more: false, ...s.drafts[id] };
+      // An untouched card follows the recommendation as it arrives (ChatGPT's list loads a moment later).
+      if (!s.touched.has(id) && !s.drafts[id].custom) Object.assign(s.drafts[id], { model: cur.model, effort: cur.effort });
+    }
+    const tabs = `<div class="ai-tabs" role="tablist" aria-label="AI 고르기">${IDS.map((id) => `<button type="button" role="tab" aria-selected="${id === s.tab}" class="${id === s.tab ? 'on' : ''}" data-tab="${id}" style="--c:${member(id).color}">${avatar(id)}<span>${esc(nameOf(id))}<small>${esc(modelLabel(id, s.models[id]))}</small></span></button>`).join('')}</div>`;
     const card = (id) => {
       const cur = s.models[id];
       const rec = room.recommended?.[id];
       const isRec = !!rec && cur.model === rec.model && (cur.effort || '') === (rec.effort || '');
       const cs = connState(id);
-      const open = s.open === id;
-      if (open) s.drafts[id] = { id, target: 'general', model: cur.model, effort: cur.effort, saved: cur.model, custom: false, more: false, ...s.drafts[id] };
-      return `<div class="mcard ${open ? 'open' : ''}" style="--c:${member(id).color}">
-        <div class="mc-top">${avatar(id, 'conn-av')}<b>${esc(nameOf(id))}</b><span class="cs ${cs.key}">${esc(cs.text)}</span></div>
-        <div class="mc-model"><code>${esc(modelLabel(id, cur))}</code>${isRec ? '<span class="tag rec">추천 · 사용량 가장 적음</span>' : rec ? '<span class="tag">내가 고른 모델</span>' : ''}</div>
+      return `<div class="mcard open" style="--c:${member(id).color}">
+        <div class="mc-top"><b>${esc(nameOf(id))}</b><span class="cs ${cs.key}">${esc(cs.text)}</span>${isRec ? '<span class="tag rec">추천 · 사용량 가장 적음</span>' : rec ? `<button type="button" class="link-btn" data-rec="${id}">추천으로 되돌리기</button>` : ''}</div>
         ${!rec && id === 'gpt' ? '<small class="hint">가장 가벼운 모델을 찾는 중이에요… 잠시 뒤 자동으로 골라 드려요.</small>' : ''}
-        <div class="mc-actions">${rec && !isRec ? `<button type="button" class="link-btn" data-rec="${id}">추천으로 되돌리기</button>` : ''}<button type="button" class="link-btn" data-change="${id}">${open ? '닫기' : '다른 모델 고르기'}</button></div>
-        ${open ? `<div class="chooser" data-chooser="${id}">${chooserHTML(s.drafts[id])}</div>` : ''}</div>`;
+        <div class="chooser compact" data-chooser="${id}">${chooserHTML(s.drafts[id])}</div></div>`;
     };
     body.innerHTML = `<h2 id="setupTitle">AI 두뇌(모델) 고르기</h2>
-      <p>모델은 AI의 <b>“두뇌 종류”</b>예요. 가벼운 모델일수록 빠르고 <b>구독 사용량을 덜 써요</b>. 그래서 사용량을 가장 적게 쓰는 모델을 <b>추천</b>으로 미리 골라 뒀어요. 그대로 시작해도 돼요.</p>
-      <div class="model-cards">${IDS.map(card).join('')}</div>
-      <div class="cost-note">가벼운 모델은 아주 어려운 질문에는 덜 정확할 수 있어요. 나중에 사이드바의 <b>[연결·모델 설정 다시 열기]</b>나 입력창 아래 모델 버튼에서 언제든 바꿀 수 있어요.</div>`;
+      <p>가벼운 모델일수록 빠르고 <b>사용량을 덜 써요</b>. AI를 고르고 원하는 모델을 누르세요.</p>
+      ${tabs}
+      <div class="model-cards">${card(s.tab)}</div>
+      <p class="hint">나중에 <b>설정</b>이나 입력창 아래 모델 버튼에서 언제든 바꿀 수 있어요.</p>`;
     acts.innerHTML = '<button type="button" class="model-pill" data-act="skip">나중에 하기</button><span class="grow"></span><button type="button" class="model-pill" data-act="prev">이전</button><button type="button" class="model-pill primary" data-act="next">다음</button>';
+    body.querySelectorAll('[data-tab]').forEach((b) => b.addEventListener('click', () => { s.tab = b.dataset.tab; renderSetup(); }));
     body.querySelectorAll('[data-rec]').forEach((b) => b.addEventListener('click', () => {
       const id = b.dataset.rec;
       s.models[id] = { ...room.recommended[id] }; s.touched.delete(id); delete s.drafts[id]; renderSetup();
     }));
-    body.querySelectorAll('[data-change]').forEach((b) => b.addEventListener('click', () => { const id = b.dataset.change; s.open = s.open === id ? null : id; renderSetup(); }));
     body.querySelectorAll('[data-chooser]').forEach((root) => {
       const id = root.dataset.chooser;
       const d = s.drafts[id];
@@ -1541,7 +1636,7 @@ async function refreshPreview() {
     if (r.needTwo) text = '토론하려면 AI를 2명 이상 불러주세요';
     else if (!r.ids.length) text = '답할 수 있는 AI가 없어요';
     else if (r.kind === 'discussion') text = `${names}가 토론${out}`;
-    else if (r.kind === 'room') text = state.room.auto.on ? '각 AI가 자율적으로 답해요 · @이름은 우선 호출' : '방이 꺼져 있어요 · 켜기를 눌러 대화를 시작하세요';
+    else if (r.kind === 'room') text = state.room.auto.on ? '각 AI가 자율적으로 답해요 · @이름은 우선 호출' : 'Talk off · 내 질문에는 답하고, AI끼리 자동 대화만 쉬어요';
     else if (r.ids.length === 1) text = `${names}에게 질문${out}`;
     else text = `${names}가 답변${out}`;
     hint.textContent = text; hint.classList.toggle('warn', !!r.needTwo || !r.ids.length);
@@ -1632,8 +1727,30 @@ $('#chatFrequencySeg').addEventListener('click', event => {
   if (button && !guest) update({ chatFrequency: button.dataset.frequency });
 });
 $('#detailsBox').addEventListener('toggle', () => { if (state) renderDetails(); });
-$('#openSetup').onclick = openSetup;
-$('#openTour').onclick = startTour;
+const settingsDialog = $('#settingsDialog');
+$('#settingsBtn').onclick = () => settingsDialog.showModal();
+$('#settingsClose').onclick = () => settingsDialog.close();
+// Room reset: pick what to clear, type 초기화, and the server backs everything up before clearing.
+const resetDialog = $('#resetDialog');
+const resetChoices = () => Object.fromEntries([...resetDialog.querySelectorAll('[data-reset]')].map((box) => [box.dataset.reset, box.checked]));
+const resetReady = () => { $('#resetRun').disabled = $('#resetConfirm').value.trim() !== '초기화' || !Object.values(resetChoices()).some(Boolean); };
+$('#resetOpen').onclick = () => { settingsDialog.close(); $('#resetForm').reset(); $('#resetError').textContent = ''; resetReady(); resetDialog.showModal(); };
+resetDialog.addEventListener('input', resetReady);
+// Tearing the house down also clears its history.
+resetDialog.querySelector('[data-reset="houseBuild"]').addEventListener('change', (e) => { if (e.target.checked) resetDialog.querySelector('[data-reset="houseLog"]').checked = true; resetReady(); });
+$('#resetRun').onclick = async () => {
+  $('#resetRun').disabled = true; $('#resetRun').textContent = '초기화 중…'; $('#resetError').textContent = '';
+  try {
+    const result = await api('/api/reset', { items: resetChoices(), confirm: $('#resetConfirm').value.trim() });
+    resetDialog.close();
+    applyState(await api('/api/state'));
+    toast(`초기화했어요. 백업: ${result.backup}`);
+  } catch (e) { $('#resetError').textContent = e.message; }
+  finally { $('#resetRun').textContent = '초기화'; resetReady(); }
+};
+// Setup and the tour draw above the page, so the modal settings dialog closes first.
+$('#openSetup').onclick = () => { settingsDialog.close(); openSetup(); };
+$('#openTour').onclick = () => { settingsDialog.close(); startTour(); };
 $('#send').onclick = send;
 $('#stop').onclick = async () => { try { await api('/api/cancel', {}); applyState(await api('/api/state')); } catch (e) { toast(e.message); } };
 input.oninput = autosize;
@@ -1685,7 +1802,68 @@ tl.addEventListener('scroll', () => {
   if (far < 100) { $('#jump').hidden = true; maybeMarkRead(); }
   else if (far > 400 && $('#jump').hidden) showJump('최신 메시지로 ↓');
 });
-$('#jump').onclick = () => { tl.scrollTop = tl.scrollHeight; $('#jump').hidden = true; };
+// The jump button rolls the timeline down to the newest message (instantly when motion is reduced).
+function toLatest() {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  tl.scrollTo({ top: tl.scrollHeight, behavior: reduce ? 'auto' : 'smooth' });
+  $('#jump').hidden = true;
+}
+$('#jump').onclick = toLatest;
+// The page itself never scrolls (only the timeline and panels do); undo it if anything pushes it.
+addEventListener('scroll', () => { if (document.scrollingElement?.scrollTop) document.scrollingElement.scrollTop = 0; });
+// ---------- chat search: like KakaoTalk, a bar under the header steps through every match, oldest ▲ / newest ▼ ----------
+const search = { ids: [], i: -1, timer: 0, q: '' };
+function searchHighlight() {
+  if (!globalThis.CSS?.highlights) return;
+  CSS.highlights.delete('chat-search');
+  const id = search.ids[search.i], node = id && document.querySelector(`#msgs [data-id="${id}"] .text, #msgs .sys[data-id="${id}"]`);
+  if (!node || !search.q) return;
+  const ranges = [], q = search.q.toLowerCase();
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    const value = text.nodeValue.toLowerCase();
+    for (let at = value.indexOf(q); at >= 0; at = value.indexOf(q, at + q.length)) {
+      const range = new Range(); range.setStart(text, at); range.setEnd(text, at + q.length); ranges.push(range);
+    }
+  }
+  if (ranges.length) CSS.highlights.set('chat-search', new Highlight(...ranges));
+}
+function searchCountText() {
+  $('#searchCount').textContent = !search.q ? '' : search.ids.length ? `${search.i + 1}/${search.ids.length}` : '결과 없음';
+  $('#searchUp').disabled = search.i <= 0;
+  $('#searchDown').disabled = search.i < 0 || search.i >= search.ids.length - 1;
+}
+async function searchGo() {
+  searchCountText();
+  const id = search.ids[search.i];
+  if (!id) return;
+  if (!jumpTo(id) && !guest) for (let n = 0; n < 30 && !jumpTo(id) && !$('#loadMore').hidden; n++) await loadOlder().catch(() => {});
+  if (!document.querySelector(`#msgs [data-id="${id}"]`)) toast('이 메시지는 지금 불러온 대화 범위 밖에 있어요.');
+  searchHighlight();
+}
+async function searchRun() {
+  search.q = $('#searchInput').value.trim();
+  if (!search.q) { search.ids = []; search.i = -1; searchCountText(); searchHighlight(); return; }
+  const { ids } = await api('/api/search', { q: search.q });
+  search.ids = ids; search.i = ids.length - 1; // start from the newest match
+  await searchGo();
+}
+function searchClose() {
+  $('#searchBar').hidden = true; $('#searchBtn').setAttribute('aria-expanded', 'false');
+  $('#searchInput').value = ''; search.q = ''; search.ids = []; search.i = -1; searchHighlight(); searchCountText();
+}
+$('#searchBtn').onclick = () => {
+  if (!$('#searchBar').hidden) { searchClose(); return; }
+  $('#searchBar').hidden = false; $('#searchBtn').setAttribute('aria-expanded', 'true'); $('#searchInput').focus();
+};
+$('#searchInput').oninput = () => { clearTimeout(search.timer); search.timer = setTimeout(() => searchRun().catch((e) => toast(e.message)), 250); };
+$('#searchInput').onkeydown = (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); searchClose(); }
+  if (e.key === 'Enter') { e.preventDefault(); if (search.i > 0) { search.i--; searchGo(); } } // Enter steps to the older match
+};
+$('#searchUp').onclick = () => { if (search.i > 0) { search.i--; searchGo(); } };
+$('#searchDown').onclick = () => { if (search.i < search.ids.length - 1) { search.i++; searchGo(); } };
+$('#searchClose').onclick = searchClose;
 $('#lightbox').onclick = () => { $('#lightbox').hidden = true; };
 $('#wsBtn').onclick = () => setWorkspaceOpen($('#app').classList.contains('ws-closed'));
 $('#closeWs').onclick = () => setWorkspaceOpen(false);
@@ -1765,8 +1943,9 @@ try {
   if (!first.messages.some((m) => m.id > unreadMark && m.from !== 'system' && !(m.from === 'user' && (guest ? m.guestId === first.selfId : !m.guestId)))) unreadMark = null;
   applyState(first);
   await loadChatVotes();
-  const divider = $('#msgs .unread-divider');
-  if (divider) divider.scrollIntoView({ block: 'start' }); else tl.scrollTop = tl.scrollHeight;
+  tl.scrollTop = tl.scrollHeight;
+  // Pictures that finish loading push the bottom down; stay on the newest message while the page settles.
+  setTimeout(() => { if (distance() < 400) tl.scrollTop = tl.scrollHeight; }, 400);
   maybeMarkRead();
   $('#loadMore').hidden = guest || state.messages.length < 300;
   connect();

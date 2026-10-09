@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { House, parseHouseReply, HOUSE_LIMITS, SIZE } from '../lib/house.mjs';
-import { houseNoticeHTML } from '../public/format.mjs';
+import { houseNoticeHTML, lineIcon } from '../public/format.mjs';
 
 const opts = { ids: ['claude', 'gpt', 'gemini'], names: { claude: 'Claude', gpt: 'ChatGPT', gemini: 'Gemini' } };
 const make = () => new House(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'house-')), 'house.json'), opts);
@@ -125,6 +125,6 @@ test('notices count only permitted cells and retain partial changes when a wall 
 
 test('house notice markup distinguishes the actor and escapes all untrusted text', () => {
   assert.equal(houseNoticeHTML('Claude', '바닥 놓음 4칸 (2,2–3,3)'),
-    '🧱 <span class="who">Claude</span> 바닥 놓음 4칸 (2,2–3,3)');
-  assert.equal(houseNoticeHTML('<img>', '<script>'), '🧱 <span class="who">&lt;img&gt;</span> &lt;script&gt;');
+    `${lineIcon('build')} <span class="who">Claude</span> 바닥 놓음 4칸 (2,2–3,3)`);
+  assert.equal(houseNoticeHTML('<img>', '<script>'), `${lineIcon('build')} <span class="who">&lt;img&gt;</span> &lt;script&gt;`);
 });

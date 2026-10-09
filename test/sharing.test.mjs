@@ -251,7 +251,8 @@ test('friend discussion charges each call, blocks overlapping AI requests and ke
   assert.equal(state.sharedRoom.active.models, undefined);
   assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '겹치는 토론', discussion: true } })).status, 409);
   assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '@Claude 질문' } })).status, 409);
-  assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '사람끼리 채팅' } })).status, 200);
+  // While a discussion runs nobody sends anything, people's chat included.
+  assert.equal((await f.remote('/api/send', { cookie: second.cookie, body: { text: '사람끼리 채팅' } })).status, 409);
   release();
   await f.wait(() => f.app.view().room.active === null);
   assert.equal(f.calls.length, 5);
@@ -659,7 +660,9 @@ test('beta shared house and ballots use server identity across owner devices and
   f.app.houseRuntime.ballot('claude', { id: pendingId, choice: 0 }, true, '정원을 선택할게');
   f.app.houseRuntime.ballot('gpt', { id: pendingId, choice: 1 }, true, '바비큐장을 선택할게');
   const state = (await f.remote('/api/house', { cookie: friend.cookie })).body;
-  assert.equal(state.role, 'guest'); assert.equal(state.player, null);
+  assert.equal(state.role, 'guest');
+  // A friend allowed into the house walks in as their own character, listed with everyone in the house.
+  assert.ok(state.player); assert.ok(Object.keys(state.people).some((who) => who.startsWith('guest:')));
   const id = state.story.current.id;
   const notice = (await f.remote('/api/state', { cookie: friend.cookie })).body.messages.filter(m => m.kind === 'house-vote' && m.voteId === id);
   assert.equal(notice.length, 1); assert.match(notice[0].text, /투표가 열렸어요/);
@@ -1159,4 +1162,14 @@ test('phase 4: a friend cannot widen the summary range past their entry', async 
   await f.owner('/api/send', { text: '입장 후 대화' });
   assert.equal((await f.remote('/api/summary', { cookie: friend.cookie, body: { since: 0 } })).status, 200);
   assert.ok(!f.calls.at(-1)[2].includes('입장 전 비밀')); assert.match(f.calls.at(-1)[2], /입장 후 대화/);
+});
+
+test('with Talk off a friend still gets one answer, with no follow-ups among the members', async t => {
+  const f = await fixture(t, (id) => say(id === 'claude' ? { action: 'say', messages: ['@GPT 너도 와'] } : { action: 'pass' }), { ids: ['claude', 'gpt'] });
+  const friend = await f.join('토프친구');
+  assert.equal(f.app.view().room.auto.on, false);
+  assert.equal((await f.remote('/api/send', { cookie: friend.cookie, body: { text: '@Claude 안녕?' } })).status, 200);
+  await f.pump(); await f.wait(() => f.app.store.messages.at(-1).from === 'claude');
+  for (let i = 0; i < 5; i++) await f.pump();
+  assert.equal(f.calls.length, 1, 'one answer and no chain to GPT');
 });

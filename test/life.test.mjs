@@ -58,13 +58,13 @@ test('life beats use the furniture, never repeat a member\'s last action and mir
   buildHome(house); enterLife(house, 1);
   const [sofa, desk] = house.s.items;
   const work = lifeBeat(house, 'claude', { mode: 'work', names, rand: () => 0.1, now: 2 });
-  assert.equal(work.text, '💻 책상에서 작업 중'); assert.ok(adjacent(house, 'claude', desk));
+  assert.equal(work.text, '책상에서 작업 중'); assert.ok(adjacent(house, 'claude', desk));
   const after = lifeBeat(house, 'claude', { mode: 'after-work', names, rand: () => 0.1, now: 3 });
-  assert.equal(after.text, '☕ 작업 끝나고 소파에서 쉬는 중'); assert.ok(adjacent(house, 'claude', sofa));
+  assert.equal(after.text, '작업 끝나고 소파에서 쉬는 중'); assert.ok(adjacent(house, 'claude', sofa));
   const talk = lifeBeat(house, 'gpt', { mode: 'talk', partner: 'claude', names, rand: () => 0.1, now: 4 });
-  assert.equal(talk.text, '💬 Claude와 이야기 중');
+  assert.equal(talk.text, 'Claude와 이야기 중');
   assert.equal(Math.abs(house.s.agents.gpt.x - house.s.agents.claude.x) + Math.abs(house.s.agents.gpt.z - house.s.agents.claude.z), 1);
-  assert.match(lifeBeat(house, 'gemini', { mode: 'rest', names, rand: () => 0.1, now: 5 }).text, /^😴 소파에서 한숨 쉬는 중$/);
+  assert.match(lifeBeat(house, 'gemini', { mode: 'rest', names, rand: () => 0.1, now: 5 }).text, /^소파에서 한숨 쉬는 중$/);
   const rand = seeded(7);
   const seen = [];
   for (let i = 0; i < 40; i++) {

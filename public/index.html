@@ -44,36 +44,10 @@
     </div>
 
     <div class="side-sec settings">
-      <div class="sec-label">대화 설정</div>
-      <div id="autoField">
-        <div class="field" id="chatFrequencyField">
-          <span class="field-label">💬 채팅 빈도</span>
-          <div class="seg" id="chatFrequencySeg" role="group" aria-label="채팅 빈도"><button type="button" data-frequency="quiet">조용한</button><button type="button" data-frequency="normal">보통</button><button type="button" data-frequency="lively">활발하게</button></div>
-        </div>
-        <p class="hint" id="chatFrequencyHint">자율 대화 빈도만 조절해요. 직접 질문과 멘션은 그대로 답해요.</p>
-        <div class="field" id="aiIntensityField">
-          <span class="field-label">🤖 AI 참여 강도</span>
-          <div class="seg" id="aiIntensitySeg" role="group" aria-label="AI 참여 강도"><button type="button" data-intensity="quiet">조용히</button><button type="button" data-intensity="normal">보통</button><button type="button" data-intensity="lively">활발하게</button></div>
-        </div>
-        <p class="hint" id="aiIntensityHint"></p>
-        <div class="field">
-          <span class="field-label">⚡ 진심모드</span>
-          <div class="seg" id="boostSeg" role="group" aria-label="진심모드"><button type="button" data-boost="auto">자동</button><button type="button" data-boost="manual">부를 때만</button><button type="button" data-boost="off">끔</button></div>
-        </div>
-        <p class="hint" id="boostHint"></p>
-        <p class="hint" id="autoNote" hidden></p>
-        <div class="field">
-          <label class="field-label" for="autoSleep">자동 잠들기</label>
-          <select id="autoSleep" aria-label="자동 잠들기"><option value="5">5분 뒤</option><option value="15">15분 뒤</option><option value="30" selected>30분 뒤</option><option value="60">1시간 뒤</option><option value="0">안 잠듦</option></select>
-        </div>
-        <p class="hint">내가 말이 없으면 쉬어요. 말 걸면 다시 깨어나요.</p>
-      </div>
-      <div class="guide-buttons" id="guideButtons">
-        <button class="side-btn" id="openSetup" type="button">연결·모델 설정 다시 열기</button>
-        <button class="side-btn" id="openTour" type="button">사용법 다시 보기</button>
-      </div>
-      <div class="stat">대화는 선택한 AI 회사로 전송됩니다.<br>자동 창작은 작업공간에만 저장해요.</div>
-      <details id="detailsBox" class="details-box"><summary>자세히</summary><div id="detailsBody"></div></details>
+      <button class="settings-open" id="settingsBtn" type="button" aria-haspopup="dialog" aria-controls="settingsDialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span class="settings-open-text">설정</span>
+              </button>
     </div>
   </aside>
 
@@ -87,11 +61,12 @@
         <button class="chatter-btn" id="chatterBtn" type="button" aria-pressed="true" title="AI들끼리 떠드는 Talk 켜기/끄기"><i aria-hidden="true"></i><span id="chatterText">Talk on</span></button>
       </div>
       <div class="head-actions" data-pwa-install>
+        <button class="icon-btn" id="searchBtn" type="button" aria-label="대화 검색" title="대화 검색" aria-expanded="false" aria-controls="searchBar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM20 20l-4.8-4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         <button class="icon-btn" id="shareBtn" type="button" aria-label="휴대폰 연결 및 친구 초대" title="휴대폰 연결 · 친구 초대">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="6" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="18" cy="19" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 10 6-4M9 14l6 4" stroke="currentColor" stroke-width="1.7"/></svg>
         </button>
         <button class="icon-btn" id="notifyBtn" type="button" aria-label="알림 설정" title="알림 설정" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></button>
-        <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" aria-expanded="false" title="집짓기 · 생활 · 집 기록"><span aria-hidden="true" style="font-size:19px;line-height:1">🏠</span></button>
+        <button class="icon-btn" id="houseBtn" type="button" aria-label="집 열기" aria-expanded="false" title="집짓기 · 생활 · 집 기록"><span class="house-emoji" aria-hidden="true">🏘️</span></button>
         <button class="icon-btn" id="themeBtn" type="button" aria-label="밝게/어둡게" data-i18n-aria="head.theme">
           <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
         </button>
@@ -105,14 +80,22 @@
         <details class="head-more" id="ownerMore">
           <summary class="icon-btn" aria-label="더 보기" title="더 보기">⋯</summary>
           <div class="head-more-menu">
-            <button type="button" class="owner-mobile-action" data-head-action="taskBtn">🔨 작업대</button>
-            <button type="button" class="owner-mobile-action" data-head-action="themeBtn">☾ 테마</button>
+            <button type="button" class="owner-mobile-action" data-head-action="taskBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 11-8 9a2 2 0 0 1-3-3l9-8m-2-4 4-3 7 7-3 3-3-3-3 3-4-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>작업대</span></button>
+            <button type="button" class="owner-mobile-action" data-head-action="themeBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>밝게/어둡게</span></button>
             <div data-owner-install></div>
           </div>
         </details>
       </div>
     </header>
 
+    <div class="search-bar" id="searchBar" role="search" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 17a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM20 20l-4.8-4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <input id="searchInput" type="search" placeholder="대화 내용 검색" autocomplete="off" aria-label="대화 내용 검색">
+      <span class="search-count" id="searchCount" aria-live="polite"></span>
+      <button type="button" class="icon-btn" id="searchUp" aria-label="이전(더 오래된) 결과" title="이전 결과" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button" class="icon-btn" id="searchDown" aria-label="다음(더 최근) 결과" title="다음 결과" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button type="button" class="icon-btn" id="searchClose" aria-label="검색 닫기" title="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
     <section id="taskScreen" aria-label="작업대" hidden>
       <aside class="task-sidebar" id="taskSidebar" aria-label="작업대 프로젝트와 대화 기록">
         <div class="task-brand">작업대 <span>로컬 저장</span></div>
@@ -483,7 +466,7 @@
           <span class="ds-label">웹 검색 요청</span>
           <span class="switch"><input id="webSearch" type="checkbox" aria-label="웹 검색 요청" aria-describedby="webHint"><span></span></span>
         </label>
-        <span class="play-tools"><button type="button" class="play-tool" id="pollBtn" title="투표 만들기 (AI 호출 없음)">📊 투표</button><button type="button" class="play-tool" id="gameBtn" title="미니게임 시작">🎮 게임</button><button type="button" class="play-tool" id="savedBtn" title="저장한 명장면 모아보기">★ 명장면</button></span>
+        <span class="play-tools"><button type="button" class="play-tool" id="pollBtn" title="투표 만들기 (AI 호출 없음)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6M3 20h18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>투표</span></button><button type="button" class="play-tool" id="gameBtn" title="미니게임 시작"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h10a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4v-3a4 4 0 0 1 4-4zM8 10.5v4M6 12.5h4M15.5 11.5v.5M17.5 13.5v.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>게임</span></button><button type="button" class="play-tool" id="savedBtn" title="저장한 메시지 모아보기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>저장</span></button></span>
         <span class="grow"></span>
         <button id="stop" class="stop-pill" type="button" hidden>■ 중지</button>
       </div>
@@ -518,9 +501,65 @@
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
+<dialog class="play-dialog settings-dialog" id="settingsDialog" aria-labelledby="settingsTitle">
+  <button type="button" class="dialog-x" id="settingsClose" aria-label="설정 닫기" title="닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+  <h2 id="settingsTitle">설정</h2>
+  <p class="hint settings-guest-note">방장이 정한 설정이에요. 보기만 할 수 있어요.</p>
+  <div id="autoField">
+    <div class="field" id="chatFrequencyField">
+      <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>채팅 빈도</span>
+      <div class="seg" id="chatFrequencySeg" role="group" aria-label="채팅 빈도"><button type="button" data-frequency="quiet">조용한</button><button type="button" data-frequency="normal">보통</button><button type="button" data-frequency="lively">활발하게</button></div>
+    </div>
+    <p class="hint" id="chatFrequencyHint">자율 대화 빈도만 조절해요. 직접 질문과 멘션은 그대로 답해요.</p>
+    <div class="field" id="aiIntensityField">
+      <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3zM12 4v4M9.5 13v.5M14.5 13v.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>AI 참여 강도</span>
+      <div class="seg" id="aiIntensitySeg" role="group" aria-label="AI 참여 강도"><button type="button" data-intensity="quiet">조용히</button><button type="button" data-intensity="normal">보통</button><button type="button" data-intensity="lively">활발하게</button></div>
+    </div>
+    <p class="hint" id="aiIntensityHint"></p>
+    <div class="field">
+      <span class="field-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>진심모드</span>
+      <div class="seg" id="boostSeg" role="group" aria-label="진심모드"><button type="button" data-boost="auto">자동</button><button type="button" data-boost="manual">부를 때만</button><button type="button" data-boost="off">끔</button></div>
+    </div>
+    <p class="hint" id="boostHint"></p>
+    <p class="hint" id="autoNote" hidden></p>
+    <div class="field">
+      <label class="field-label" for="autoSleep">자동 잠들기</label>
+      <select id="autoSleep" aria-label="자동 잠들기"><option value="5">5분 뒤</option><option value="15">15분 뒤</option><option value="30" selected>30분 뒤</option><option value="60">1시간 뒤</option><option value="0">안 잠듦</option></select>
+    </div>
+    <p class="hint">내가 말이 없으면 쉬어요. 말 걸면 다시 깨어나요.</p>
+  </div>
+  <div class="guide-buttons" id="guideButtons">
+    <button class="side-btn" id="openSetup" type="button">연결·모델 설정 다시 열기</button>
+    <button class="side-btn" id="openTour" type="button">사용법 다시 보기</button>
+  </div>
+  <div class="stat">대화는 선택한 AI 회사로 전송됩니다.<br>자동 창작은 작업공간에만 저장해요.</div>
+  <details id="detailsBox" class="details-box"><summary>자세히</summary><div id="detailsBody"></div></details>
+  <div class="settings-danger">
+    <b>위험 구역</b>
+    <p class="hint">대화 기록과 AI가 배운 말투·기억을 지우고 채팅방을 새로 시작해요. 지우기 전에 자동으로 백업해요.</p>
+    <button type="button" id="resetOpen">채팅방 초기화</button>
+  </div>
+</dialog>
+<dialog class="play-dialog reset-dialog" id="resetDialog" aria-labelledby="resetTitle">
+  <form method="dialog" id="resetForm">
+    <h2 id="resetTitle">채팅방 초기화</h2>
+    <p class="hint">고른 항목만 지워요. 연결·모델 설정, 친구 초대와 권한, 작업대는 그대로예요.</p>
+    <div class="reset-items">
+      <label><input type="checkbox" data-reset="chat" checked><span><b>채팅 기록</b><small>나와 친구, AI가 쓴 모든 메시지와 활동 기록</small></span></label>
+      <label><input type="checkbox" data-reset="memory" checked><span><b>AI 기억</b><small>AI가 적어 둔 메모(말투·호칭·관심사)와 자기소개</small></span></label>
+      <label><input type="checkbox" data-reset="houseLog" checked><span><b>집 대화·관계·생활 기록</b><small>집에서 나눈 대화, AI끼리 관계, 생활 사건과 스토리·투표 기록</small></span></label>
+      <label><input type="checkbox" data-reset="houseBuild"><span><b>집 건물</b><small>지은 집을 모두 허물고 처음부터 다시 지어요</small></span></label>
+      <label><input type="checkbox" data-reset="play"><span><b>투표·게임·저장한 메시지</b><small>진행 중이거나 끝난 투표·게임과 저장한 메시지</small></span></label>
+      <label><input type="checkbox" data-reset="workspace"><span><b>작업공간 창작물</b><small>AI들이 만든 글·그림·페이지 파일</small></span></label>
+    </div>
+    <label class="reset-confirm">계속하려면 <b>초기화</b>라고 입력하세요<input id="resetConfirm" autocomplete="off" placeholder="초기화"></label>
+    <p class="share-error" id="resetError" role="alert"></p>
+    <div class="play-dialog-actions"><button value="cancel" formnovalidate>취소</button><button type="button" class="danger" id="resetRun" disabled>초기화</button></div>
+  </form>
+</dialog>
 <dialog class="play-dialog" id="pollDialog" aria-labelledby="pollTitle">
   <form method="dialog" id="pollForm">
-    <h2 id="pollTitle">📊 투표 만들기</h2>
+    <h2 id="pollTitle">투표 만들기</h2>
     <label>질문<input id="pollQuestion" maxlength="100" required placeholder="예: 오늘 저녁 뭐 먹을까?"></label>
     <div id="pollOptions"><input maxlength="40" required placeholder="선택지 1" aria-label="선택지 1"><input maxlength="40" required placeholder="선택지 2" aria-label="선택지 2"></div>
     <button type="button" class="link-btn" id="pollAdd">+ 선택지 추가 (최대 4개)</button>
@@ -531,9 +570,9 @@
 </dialog>
 <dialog class="play-dialog" id="gameDialog" aria-labelledby="gameTitle">
   <form method="dialog">
-    <h2 id="gameTitle">🎮 미니게임</h2>
+    <h2 id="gameTitle">미니게임</h2>
     <label>주제 힌트 (선택)<input id="gameTopic" maxlength="40" placeholder="예: 음식, 여행, 영화"></label>
-    <div class="play-dialog-games"><button value="balance" class="primary">⚖️ 밸런스게임<small>둘 중 하나 고르기 · 60초</small></button><button value="quiz" class="primary">🧠 퀴즈 배틀<small>객관식 5문제 · 문제당 20초</small></button></div>
+    <div class="play-dialog-games"><button value="balance" class="primary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M7 20h10M5 7h14M5 7l-2.5 6a2.5 2.5 0 0 0 5 0zM19 7l-2.5 6a2.5 2.5 0 0 0 5 0z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>밸런스게임<small>둘 중 하나 고르기 · 60초</small></button><button value="quiz" class="primary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4M12 16.5v.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>퀴즈 배틀<small>객관식 5문제 · 문제당 20초</small></button></div>
     <p class="hint" id="gameHint">게임 시작 때 AI가 문제를 한 번만 만들어요 (호출 1회). 선택·채점에는 AI를 쓰지 않아요.</p>
     <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
   </form>
@@ -550,21 +589,21 @@
 </dialog>
 <dialog class="play-dialog" id="summaryDialog" aria-labelledby="summaryTitle">
   <form method="dialog">
-    <h2 id="summaryTitle">📝 놓친 대화 요약</h2>
+    <h2 id="summaryTitle">놓친 대화 요약</h2>
     <div id="summaryBody" class="summary-body" aria-live="polite"></div>
     <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
   </form>
 </dialog>
 <dialog class="play-dialog" id="notifyDialog" aria-labelledby="notifyTitle">
   <form method="dialog" id="notifyForm">
-    <h2 id="notifyTitle">🔔 알림</h2>
+    <h2 id="notifyTitle">알림</h2>
     <div id="notifyBody"></div>
     <div class="play-dialog-actions" id="notifyActions"></div>
   </form>
 </dialog>
 <dialog class="play-dialog" id="savedDialog" aria-labelledby="savedTitle">
   <form method="dialog">
-    <h2 id="savedTitle">★ 명장면</h2>
+    <h2 id="savedTitle">저장한 메시지</h2>
     <ol id="savedList" class="saved-list"></ol>
     <div class="play-dialog-actions"><button value="cancel">닫기</button></div>
   </form>

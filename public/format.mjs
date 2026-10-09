@@ -1,9 +1,30 @@
 // Pure text helpers shared by the browser UI and the tests (no DOM access).
+// Line icons in the header's style (24px grid, 1.8 stroke), used instead of emoji wherever the house and chat show one.
+const LINE_ICONS = {
+  house: 'M4 11 12 4l8 7M6 9.5V20h12V9.5M10 20v-5h4v5',
+  build: 'M3 20h18M5 20v-5h6v5M13 20v-9h6v9M7 15v-3h6',
+  tool: 'm14 11-8 9a2 2 0 0 1-3-3l9-8m-2-4 4-3 7 7-3 3-3-3-3 3-4-4z',
+  book: 'M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19V5M8 7h7',
+  bot: 'M7 8h10a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-5a3 3 0 0 1 3-3zM12 4v4M9.5 13v.5M14.5 13v.5',
+  scale: 'M12 4v16M7 20h10M5 7h14M5 7l-2.5 6a2.5 2.5 0 0 0 5 0zM19 7l-2.5 6a2.5 2.5 0 0 0 5 0z',
+  game: 'M7 7h10a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4v-3a4 4 0 0 1 4-4zM8 10.5v4M6 12.5h4M15.5 11.5v.5M17.5 13.5v.5',
+  vote: 'M5 11h14v9H5zM9 11V5h6v6M10 8l1.5 1.5L14 7',
+  leaf: 'M5 19c0-8 5-13 14-14 0 9-5 14-13 14M5 19l7-7',
+  fire: 'M12 3c1 4 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3 2-4 0 2 1 3 2 3 0-3-1-5 1-9z',
+  box: 'M4 8l8-4 8 4v8l-8 4-8-4zM4 8l8 4 8-4M12 12v8',
+  users: 'M9 11.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zM3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5M17 11.5a2.5 2.5 0 1 0 0-5M16 14.2c2.6.1 4.4 1.7 5 4.3',
+  puzzle: 'M5 5h5a2 2 0 1 1 4 0h5v5a2 2 0 1 0 0 4v5h-5a2 2 0 1 0-4 0H5v-5a2 2 0 1 0 0-4z',
+  chat: 'M4 5h16v11H9l-5 4z',
+  sparkle: 'M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18',
+};
+export function lineIcon(name, cls = 'line-ic') {
+  return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="${LINE_ICONS[name] || LINE_ICONS.sparkle}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
 export function houseNoticeHTML(name, text) {
-  return `🧱 <span class="who">${esc(name)}</span> ${esc(text)}`;
+  return `${lineIcon('build')} <span class="who">${esc(name)}</span> ${esc(text)}`;
 }
 export function houseEventHTML(text, eventId) {
-  return `<span>🏠 ${esc(text)}</span>` + (Number.isInteger(eventId) && eventId > 0
+  return `<span>${lineIcon('house')} ${esc(text)}</span>` + (Number.isInteger(eventId) && eventId > 0
     ? `<button type="button" class="house-event-link" data-house-event="${eventId}">확인하러 가기</button>` : '');
 }
 export const esc =(s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

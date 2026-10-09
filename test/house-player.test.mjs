@@ -7,7 +7,7 @@ import { House } from '../lib/house.mjs';
 import { lifeBeat } from '../lib/life.mjs';
 import { playerView, playerAction } from '../lib/house-player.mjs';
 import { furniturePose } from '../public/house-pose.mjs';
-import { movementFor, bindHouseControls } from '../public/house-controls.mjs';
+import { movementFor, bindHouseControls, stickKey } from '../public/house-controls.mjs';
 import { createAssistantServer, loadConfig } from '../server.mjs';
 
 function home(t) {
@@ -24,11 +24,10 @@ function home(t) {
   return { root, house };
 }
 
-test('player appears only after completion, uses furniture, respects floors/walls/doors and survives reload', (t) => {
+test('player can walk in during construction too, uses furniture, respects walls/doors and survives reload', (t) => {
   const { house } = home(t);
   house.s.phase = 'build';
-  assert.equal(playerView(house), null);
-  assert.throws(() => playerAction(house, { action: 'move', dx: 1, dz: 0 }), /완성/);
+  assert.deepEqual([playerView(house).x, playerView(house).z], [0, 0], 'construction is no reason to keep people out');
   house.s.phase = 'life';
   assert.deepEqual([playerView(house).x, playerView(house).z], [0, 0]);
   const act = (body) => playerAction(house, body, { gpt: 'GPT' }, 100);
@@ -94,7 +93,7 @@ test('keyboard controls ignore typing, serialize requests and stop on close, blu
   let tick, ready = true, release;
   t.mock.method(globalThis, 'setInterval', (fn) => { tick = fn; return 1; });
   const calls = [];
-  const clear = bindHouseControls(panel, { ready: () => ready, angle: () => 0,
+  const { clear, hold } = bindHouseControls(panel, { ready: () => ready, angle: () => 0,
     send: (body) => { calls.push(body); return new Promise((resolve) => { release = resolve; }); },
     error: (message) => assert.fail(message) });
   const press = (key, edit = false) => panel.handlers.keydown({
@@ -110,6 +109,12 @@ test('keyboard controls ignore typing, serialize requests and stop on close, blu
   press('ArrowRight'); release(); await Promise.resolve(); clear(); tick();
   assert.equal(calls.length, 3);
   ready = false; press('e'); assert.equal(calls.length, 3);
+  // The on-screen joystick holds a direction like an arrow key and stops when let go.
+  ready = true; release(); await Promise.resolve();
+  hold(stickKey(0, -40)); assert.deepEqual(calls.at(-1), { action: 'move', dx: 0, dz: -1 });
+  release(); await Promise.resolve(); tick(); assert.equal(calls.length, 5);
+  release(); await Promise.resolve(); hold(null); tick(); assert.equal(calls.length, 5);
+  assert.equal(stickKey(3, 4), null); assert.equal(stickKey(30, 5), 'ArrowRight'); assert.equal(stickKey(-2, 30), 'ArrowDown');
 });
 
 test('restored house player and its UI work without calling AI', async (t) => {
@@ -128,4 +133,21 @@ test('restored house player and its UI work without calling AI', async (t) => {
   assert.equal((await post({ action: 'move', dx: 1, dz: 1 })).status, 400);
   assert.equal(calls, 0);
   for (const asset of ['house.js', 'house-pose.mjs', 'house-controls.mjs', 'house-avatar.mjs']) assert.equal((await fetch(`${url}/${asset}`)).status, 200);
+});
+
+test('the interact button names what it would do: sit, lie down, wave, stand up, or nothing', async (t) => {
+  const { house } = home(t);
+  const { nearbyAction } = await import('../lib/house-player.mjs');
+  const at = (x, z) => { house.s.player = { x, z }; return nearbyAction(house, 'user', ['gpt'])?.kind ?? null; };
+  assert.equal(at(0, 1), 'sit');
+  assert.equal(at(4, 1), 'lie');
+  assert.equal(at(2, 3), 'wave');
+  assert.equal(at(4, 4), null);
+  house.s.player = { x: 0, z: 1 };
+  playerAction(house, { action: 'interact' }, { gpt: 'GPT' }, 1);
+  assert.equal(house.s.player.pose, 'sit');
+  assert.deepEqual(nearbyAction(house, 'user', ['gpt']), { kind: 'up', label: '일어나기' });
+  playerAction(house, { action: 'interact' }, { gpt: 'GPT' }, 2);
+  assert.equal(house.s.player.pose, undefined, 'pressing it again stands up in place');
+  assert.deepEqual([house.s.player.x, house.s.player.z], [0, 1]);
 });

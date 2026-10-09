@@ -33,9 +33,9 @@ test('phase 5: an AI proposal in ordinary chat cues the next real house turn, an
   const call = houseCalls(s).at(-1);
   assert.equal(call.id, 'claude');
   assert.match(call.prompt, /\[일반 단톡방에서 나온 집 이야기\]\nChatGPT: "@Claude 야 우리 집 서재 마저 짓자 ㅋㅋ"/);
-  assert.equal(news(s)[0], '🏠 ChatGPT의 제안으로 Claude가 집짓기를 시작했어요.');
+  assert.equal(news(s)[0], 'ChatGPT의 제안으로 Claude가 집짓기를 시작했어요.');
   // A progress milestone flushes the batch right away instead of waiting for the work unit to end.
-  assert.match(news(s)[1], /^🧱 Claude 공사 소식 · 바닥 4칸 완료 · 🏗️ 전체 공사 (25|50|75)% 돌파$/);
+  assert.match(news(s)[1], /^Claude 공사 소식 · 바닥 4칸 완료 · 전체 공사 (25|50|75)% 돌파$/);
   assert.equal(news(s).length, 2);
   assert.equal(s.app.houseRuntime.cue, null);
   // Per-turn detail stays out of the chat timeline but is preserved.
@@ -98,7 +98,7 @@ test('phase 5: a settled house vote announced in chat gets one result notice the
   assert.equal((await s.post('/api/house/ballot', { id: vote.id, choice: 1 })).status, 200);
   s.clock.now += 180001; await s.app.houseRuntime.tick(); await s.app.houseRuntime.tick();
   const results = s.app.store.messages.filter((m) => m.kind === 'house-news' && m.voteId === vote.id);
-  assert.equal(results.length, 1); assert.match(results[0].text, /🗳️ 투표 결과/);
+  assert.equal(results.length, 1); assert.match(results[0].text, /^투표 결과/);
   await s.reopen(); s.app.houseRuntime.changed();
   assert.equal(s.app.store.messages.filter((m) => m.kind === 'house-news' && m.voteId === vote.id).length, 1, 'not repeated after restart');
 });
@@ -107,14 +107,14 @@ test('phase 5: progress is batched per work unit, flushed after five turns or wh
   const s = await roomFixture(t, { ids: ['claude', 'gpt'] });
   const runtime = s.app.houseRuntime, counts = { floors: 2, walls: 1, doors: 0, placed: 0, moved: 0, removed: 0 };
   for (let n = 0; n < 4; n++) { runtime.reportWork(n % 2 ? 'gpt' : 'claude', counts, [], null); s.clock.now += 1000; }
-  assert.deepEqual(news(s), ['🏠 Claude가 집짓기를 시작했어요.']);
+  assert.deepEqual(news(s), ['Claude가 집짓기를 시작했어요.']);
   runtime.reportWork('gpt', { ...counts, placed: 1 }, [], null);
-  assert.equal(news(s).at(-1), '🧱 Claude·ChatGPT 공사 소식 · 바닥 10칸 · 벽 5칸 · 가구 배치 1개 완료');
+  assert.equal(news(s).at(-1), 'Claude·ChatGPT 공사 소식 · 바닥 10칸 · 벽 5칸 · 가구 배치 1개 완료');
   runtime.reportWork('claude', { ...counts, moved: 2 }, [], null);
   assert.equal(news(s).length, 2);
   s.clock.now += 3 * 60000 + 1; runtime.buildAt = Infinity;
   await runtime.tick();
-  assert.equal(news(s).at(-1), '🧱 Claude·ChatGPT 공사 소식 · 바닥 2칸 · 벽 1칸 · 가구 옮김 2개 완료');
+  assert.equal(news(s).at(-1), 'Claude·ChatGPT 공사 소식 · 바닥 2칸 · 벽 1칸 · 가구 옮김 2개 완료');
   await runtime.tick();
   assert.equal(news(s).length, 3);
 });

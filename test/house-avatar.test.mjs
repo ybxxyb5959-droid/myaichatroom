@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { createBlockAvatar, animateBlockAvatar } from '../public/house-avatar.mjs';
-import { houseEventHTML } from '../public/format.mjs';
+import { houseEventHTML, lineIcon } from '../public/format.mjs';
 
 const mesh = (_shape, x, y, z, w, h, d, color, parent) => {
   const part = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ color }));
@@ -38,7 +38,7 @@ test('walking swings opposite limbs and idle resets the legs without moving the 
 test('event cards escape text and render a check-in button only for a valid event id', () => {
   assert.match(houseEventHTML('<img onerror=alert(1)>', 7), /&lt;img/);
   assert.match(houseEventHTML('Claude와 Gemini가 티격태격함', 7), /data-house-event="7">확인하러 가기/);
-  assert.equal(houseEventHTML('hi', '"><script>'), '<span>🏠 hi</span>');
+  assert.equal(houseEventHTML('hi', '"><script>'), `<span>${lineIcon('house')} hi</span>`);
 });
 
 test('sitting bends knees, lying rotates the body, waving raises an arm and walking resets poses', () => {

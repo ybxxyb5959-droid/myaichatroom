@@ -18,7 +18,8 @@ const menuHost = document.body.dataset.role !== 'guest' && document.querySelecto
 const toolbar = menuHost || document.querySelector('[data-pwa-install]');
 function label(text) {
   button.setAttribute('aria-label', text); button.title = text;
-  if (!toolbar || menuHost) button.textContent = menuHost ? '↓ 앱 설치 · 홈 화면 추가' : text;
+  if (menuHost) button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M5 16v4h14v-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>앱 설치 · 홈 화면 추가</span>';
+  else if (!toolbar) button.textContent = text;
 }
 if (toolbar && !menuHost) {
   button.classList.add('icon-btn');
