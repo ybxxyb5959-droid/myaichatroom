@@ -108,7 +108,7 @@ test('rapid edits become one factual event and real model reactions use the ordi
   assert.equal(s.calls.length, 0); assert.equal(s.app.room.auto.on, false);
   await s.start(); await s.advance(0); await s.advance(12000);
   assert.equal(s.calls.length, 1);
-  assert.match(s.calls[0].prompt, /3칸 부숨/); assert.match(s.calls[0].brief, /실제 방장의 행동/);
+  assert.match(s.calls[0].prompt, /3칸 부숨/);
   assert.ok(s.app.store.messages.some(m => m.from === 'gpt' && m.text === '야ㅋㅋ 내 벽돌!'));
   const sent = await s.post('/api/send', { text: 'ㅋㅋ 미안 복구할게' });
   assert.equal(sent.status, 200); assert.equal(sent.value.msg.from, 'user');

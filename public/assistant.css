@@ -576,6 +576,12 @@ body[data-role="guest"] .settings-danger { display: none; }
 .conn-row small { color: var(--faint); }
 .conn-av { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; flex: none; }
 .cr-main { flex: 1; min-width: 0; font-size: 13px; }
+.cr-term { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 6px; }
+.cr-term > .hint { display: block; }
+.conn-row .cr-term .model-pill { margin-left: 0; }
+.ts-row { --c: var(--accent); }
+.ts-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; flex: none; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); }
+.ts-ic .line-ic { width: 22px; height: 22px; }
 .cr-detail { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .cost-note { font-size: 12.5px; line-height: 1.5; border-radius: 10px; padding: 9px 12px; background: color-mix(in srgb, var(--warn) 13%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .modal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
@@ -799,3 +805,18 @@ body[data-role="guest"] .compose-options #webSearchField { grid-column: 2; }
 body[data-role="guest"] .compose-options .play-tools { grid-column: 1 / -1; }
 body[data-role="guest"] .compose-options .grow { display: none; }
 body[data-role="guest"] .compose-options #stop { grid-column: 3; justify-self: end; grid-row: 2; }
+/* The friend's call estimate sits inside the 토론 button, so it never pushes 웹 검색 to the next line. */
+.ds-cost { font-size: 11px; white-space: nowrap; }
+/* On a phone the owner gets the same fixed rows: members, then 토론 + 웹 검색, then 투표 · 게임 · 저장. */
+@media (max-width: 640px) {
+  .compose-options { display: grid; grid-template-columns: auto auto 1fr; align-items: center; gap: 6px 10px; }
+  .compose-options #modelPicker { grid-column: 1 / -1; justify-self: start; }
+  .compose-options #debateSwitch { grid-column: 1; }
+  .compose-options #webSearchField { grid-column: 2; }
+  .compose-options .play-tools { grid-column: 1 / -1; }
+  .compose-options .grow { display: none; }
+  .compose-options #stop { grid-column: 3; justify-self: end; grid-row: 2; }
+  .compose-options .debate-switch { white-space: nowrap; }
+  .compose-options #modelPicker { max-width: 100%; }
+  .compose-options #modelPicker .pk-name { white-space: nowrap; flex: none; }
+}

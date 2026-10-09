@@ -309,7 +309,7 @@ function renderSide() {
   if (next === logKey) return;
   logKey = next;
   const list = $('#hsLogList');
-  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${esc(l.kind)}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(l.id === 'house' ? '집' : nameOf(l.id))}</b> ${l.kind === 'build' ? lineIcon('tool', 'line-ic sm') : l.kind === 'event' ? '[자동 연출/기록] ' : ''}${esc(l.text.replace(/^\p{Extended_Pictographic}️?\s*/u, ''))}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
+  list.innerHTML = data.log.slice(-30).map((l) => `<div class="hs-line ${esc(l.kind)}${isPerson(l.id) ? ' mine' : ''}"><b style="color:${COLORS[l.id] || 'inherit'}">${esc(l.id === 'house' ? '집' : nameOf(l.id))}</b> ${l.kind === 'build' ? lineIcon('tool', 'line-ic sm') : l.kind === 'event' ? '[자동 연출/기록] ' : ''}${esc(l.text.replace(/^\p{Extended_Pictographic}️?\s*/u, ''))}</div>`).join('') || '<div class="hs-line">아직 대화가 없어요.</div>';
   list.scrollTop = list.scrollHeight;
 }
 async function load() {
@@ -480,6 +480,10 @@ $('#hsChat').onsubmit = async (e) => {
     input.value = ''; $('#hsError').hidden = true; load();
   } catch (err) { error(err.message); }
 };
+// On a phone the folded sheet shows only the last few lines; a tap on them, or on the message box, opens it to half.
+const unfold = () => { if (phone.matches && dock.dataset.height === 'peek') { dock.dataset.height = 'half'; requestAnimationFrame(() => { $('#hsLogList').scrollTop = $('#hsLogList').scrollHeight; }); } };
+$('#hsLogList').addEventListener('click', unfold);
+$('#hsChatInput').addEventListener('focus', unfold);
 $('#hsLogToggle').onclick = () => {
   const open = $('#hsLogList').hidden;
   $('#hsLogList').hidden = !open; $('#hsChat').hidden = !open; $('#hsLogToggle').setAttribute('aria-expanded', String(open));

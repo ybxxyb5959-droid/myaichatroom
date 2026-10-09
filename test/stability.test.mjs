@@ -307,7 +307,7 @@ test('all automatic features share bounded timers and budgets over two accelerat
   const adapter = fake();
   adapter.chat = async (id, brief, prompt, options) => {
     adapter.calls.push({ id, at: clock.now, options });
-    return { ok: true, text: '{"action":"say","messages":["월드를 둘러보는 중"],"build":[{"op":"place","at":[2,1,2],"block":"stone"}]}' };
+    return { ok: true, text: '{"action":"say","messages":["둘러보는 중"],"build":[{"op":"place","at":[2,1,2],"block":"stone"}]}' };
   };
   const app = createAssistantServer({ root, cfg: cfg(), clock: () => clock.now, random: () => 0.3, adapter, wait: async () => {} });
   try {
@@ -322,7 +322,7 @@ test('all automatic features share bounded timers and budgets over two accelerat
       assert.equal(intervals.size, 1);
     }
     assert.ok(adapter.calls.length > 0);
-    assert.equal(app.world.blocks.get('2,1,2'), 'stone');
+    assert.equal(app.world.blocks.get('2,1,2'), undefined, 'chat no longer builds in the old world');
     assert.ok(!app.store.messages.some((m) => m.auto === 'life'));
     assert.ok(!app.activity.entries.some((entry) => entry.kind === 'game'), 'chat games are no longer automatic activities');
     const count = adapter.calls.length, messages = app.store.messages.length;

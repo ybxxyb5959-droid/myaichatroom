@@ -37,6 +37,8 @@ const CONNECT = {
   gpt: { need: 'ChatGPT 계정이 필요해요.', install: 'irm https://chatgpt.com/codex/install.ps1 | iex', login: 'codex login' },
   gemini: { need: 'Google 계정이 필요해요.', install: 'irm https://antigravity.google/cli/install.ps1 | iex', login: 'agy' },
 };
+// Setup windows (PowerShell, Tailscale) can be opened only from the PC's own screen.
+const onPC = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
 const EXAMPLES = [
   { tag: '자료 조사', text: '최근 1년 사이 바뀐 국내 전기차 보조금 제도를 출처 링크와 함께 정리해 줘.' },
   { tag: '자료 조사', text: '개인 프로젝트용으로 PostgreSQL과 SQLite를 비교해서 표로 정리해 줘.' },
@@ -147,6 +149,8 @@ async function loadChatVotes() {
 window.addEventListener('house-update', loadChatVotes);
 setInterval(() => updateVoteClocks($('#msgs')), 1000);
 const renderDiscussionStage = createDiscussionStage($('#discussionStage'));
+// A friend's discussion switch lives on the friend's own screen, so it opens the round table there too.
+const renderStage = () => renderDiscussionStage(guest ? { ...state.room, discussion: state.room.discussion || guestDiscussion } : state.room);
 
 // ---------- helpers ----------
 function toast(text) {
@@ -598,7 +602,7 @@ function applyState(next) {
   if (profileId) renderProfile();
   if (menu && !$('#modelPop').contains(document.activeElement?.closest('input'))) renderMenu();
   // Redraw the guide only when what it shows changed, so a click never lands on a replaced button.
-  const checks = JSON.stringify([state.room.checks, state.room.checking, state.catalog]);
+  const checks = JSON.stringify([state.room.checks, state.room.checking, state.catalog, state.setupTerminals]);
   if (setup && checks !== setup.seen && !$('#setup').contains(document.activeElement?.closest('input'))) renderSetup();
 }
 
@@ -608,7 +612,7 @@ function stateClass(s) {
 }
 function renderProgress() {
   const stick = distance() < 100 && Date.now() > holdUntil && !search.q;
-  renderDiscussionStage(state.room);
+  renderStage();
   if (stick) tl.scrollTop = tl.scrollHeight;
   const a = state.room.active?.mode === 'discussion' ? state.room.active : null;
   const box = $('#typing');
@@ -852,7 +856,7 @@ function renderGuestControls() {
   $('#debateSwitch').classList.toggle('on', guestDiscussion);
   $('#debateSwitch').title = room.active ? '토론 진행 중 · 사람끼리 채팅은 가능' : `토론 시 최대 ${debateCalls}회 호출 · 실제 호출만 차감`;
   let cost = $('#guestDebateCost');
-  if (!cost) { cost = document.createElement('small'); cost.id = 'guestDebateCost'; cost.className = 'm-maker'; $('#debateSwitch').after(cost); }
+  if (!cost) { cost = document.createElement('small'); cost.id = 'guestDebateCost'; cost.className = 'm-maker ds-cost'; $('#debateSwitch').append(cost); }
   cost.hidden = !guestDiscussion;
   cost.textContent = `최대 ${debateCalls}회 · ${state.usage.guestLimit ? Math.ceil(debateCalls / state.usage.guestLimit * 100) : 100}%`;
   $('#webSearchField').hidden = false;
@@ -1277,7 +1281,7 @@ function renderSetup() {
   const body = $('#setupBody');
   const acts = $('#setupActions');
   const room = state.room;
-  s.seen = JSON.stringify([room.checks, room.checking, state.catalog]);
+  s.seen = JSON.stringify([room.checks, room.checking, state.catalog, state.setupTerminals]);
   $('#setupSteps').querySelectorAll('li').forEach((li, i) => { li.className = i + 1 < s.step ? 'done' : i + 1 === s.step ? 'now' : ''; });
   if (s.step === 1) {
     body.innerHTML = `<h2 id="setupTitle">AI 연결하기</h2>
@@ -1287,14 +1291,17 @@ function renderSetup() {
         const c = CONNECT[id];
         const check = room.checks[id];
         const detail = check.login?.detail || '';
-        const how = cs.key === 'install' || cs.key === 'login'
-          ? `<details class="cr-more" ${cs.key === 'install' ? '' : 'open'}><summary>어떻게 하나요?</summary><ol class="how">
-              <li>${esc(c.need)}</li>
+        // On the PC itself one button opens a PowerShell window that installs and signs in; the typed commands stay as a fallback.
+        const open = (state.setupTerminals || []).includes(`ai:${id}`);
+        const how = cs.key === 'install' || cs.key === 'login' ? `<div class="cr-term">
+            <small class="hint">${esc(c.need)}</small>
+            ${onPC ? (open ? '<span class="cs busy">PowerShell 창에서 진행 중… 끝나면 자동으로 다시 확인해요</span>'
+              : `<button type="button" class="model-pill primary" data-term="${id}">${cs.key === 'install' ? '설치하고 로그인하기' : '로그인하기'}</button>`) : ''}
+            <details class="cr-more"><summary>${onPC ? '직접 명령어로 하기' : '어떻게 하나요?'}</summary><ol class="how">
               ${cs.key === 'install' ? `<li>키보드의 <b>Windows 키</b>를 누르고 <b>PowerShell</b>을 검색해서 열어요.</li>
               <li>아래 줄을 <b>[복사]</b>해서 붙여넣고 Enter를 눌러요.<span class="cmd-row"><code class="cmd">${esc(c.install)}</code><button type="button" class="model-pill" data-copy="${esc(c.install)}">복사</button></span></li>` : ''}
               <li>${id === 'gemini' ? `PowerShell에 <code>agy</code>를 입력하면 브라우저가 열려요. 구독 중인 Google 계정으로 로그인해요.` : `PowerShell에 아래 줄을 붙여넣어 로그인해요.<span class="cmd-row"><code class="cmd">${esc(c.login)}</code><button type="button" class="model-pill" data-copy="${esc(c.login)}">복사</button></span>`}</li>
-              <li>끝나면 이 앱을 껐다가 다시 켜요. (<b>start.bat</b>)</li></ol>
-              <p class="hint">더 쉬운 방법: 프로젝트 폴더의 <b>setup.bat</b>을 더블클릭하면 설치를 도와줘요.</p></details>` : '';
+              <li>끝나면 아래 <b>[다시 확인]</b>을 눌러요.</li></ol></details></div>` : '';
         const test = cs.key === 'unknown' ? `<button type="button" class="model-pill" data-test="${id}" title="짧은 질문을 한 번 보내 봐요. 사용량이 조금 쓰여요">말 걸어 보기</button>` : '';
         return `<div class="conn-row" style="--c:${member(id).color}">${avatar(id, 'conn-av')}
           <div class="cr-main"><div><b>${esc(nameOf(id))}</b> <small>${esc(member(id).maker)}</small></div>
@@ -1315,6 +1322,13 @@ function renderSetup() {
       const m = setup.models[b.dataset.test];
       testCall(b.dataset.test, 'general', m.model, m.effort);
     }));
+    body.querySelectorAll('[data-term]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '창을 여는 중…';
+      try { await api('/api/setup/terminal', { kind: 'ai', id: b.dataset.term }); toast('PowerShell 창이 열렸어요. 안내대로 진행해 주세요.'); }
+      catch (err) { toast(err.message); b.disabled = false; }
+    }));
+  } else if (s.step === 3) {
+    renderPhoneStep(body, acts);
   } else if (s.step === 2) {
     // ChatGPT's list of models is loaded quietly (it costs no usage), because the lightest one is found in it.
     if (state.catalog.gpt.available && !state.catalog.gpt.listedAt && !s.listing) {
@@ -1378,6 +1392,7 @@ function renderSetup() {
   on('skip', () => finishSetup(false));
   on('next', () => { setup.step++; renderSetup(); });
   on('prev', () => { setup.step--; renderSetup(); });
+  if (s.step !== 3 && s.tsTimer) { clearInterval(s.tsTimer); s.tsTimer = null; }
   on('start', () => finishSetup(true));
   on('login', async (e) => {
     e.target.disabled = true; e.target.textContent = '확인 중…';
@@ -1386,15 +1401,61 @@ function renderSetup() {
   });
   acts.querySelector('.primary')?.focus({ preventScroll: true });
 }
+// Step 3: is the PC ready for my phone and friends? Only the PC needs Tailscale for friends; my phone needs it too.
+const TS_TEXT = { missing: ['install', '설치가 필요해요'], login: ['login', '로그인이 필요해요'], stopped: ['login', '꺼져 있어요'], ok: ['ok', '연결됐어요'] };
+function renderPhoneStep(body, acts) {
+  const s = setup;
+  const ts = s.ts;
+  const [key, text] = ts ? TS_TEXT[ts.status] || ['unknown', '확인 중…'] : ['busy', '확인 중…'];
+  const button = !onPC || !ts || ts.status === 'ok' ? ''
+    : ts.terminal ? '<span class="cs busy">PowerShell 창에서 진행 중… 끝나면 자동으로 다시 확인해요</span>'
+    : ts.status === 'stopped' ? '<small class="hint">화면 오른쪽 아래 작업 표시줄에서 Tailscale 아이콘을 눌러 켜 주세요.</small>'
+    : `<button type="button" class="model-pill primary" data-ts>${ts.status === 'missing' ? 'Tailscale 설치하고 로그인하기' : 'Tailscale 로그인하기'}</button>`;
+  body.innerHTML = `<h2 id="setupTitle">휴대폰·친구 연결 준비</h2>
+    <p>밖에서도 <b>내 폰</b>으로 단톡방을 쓰고, <b>친구</b>를 링크 하나로 초대할 수 있어요. 그러려면 이 PC에 <b>Tailscale</b>(무료)이 켜져 있어야 해요.</p>
+    <div class="conn-table"><div class="conn-row ts-row">
+      <span class="ts-ic" aria-hidden="true">${lineIcon('users')}</span>
+      <div class="cr-main"><div><b>이 PC의 Tailscale</b></div><span class="cs ${key}">${esc(text)}</span>
+        ${ts?.detail && ts.status !== 'ok' ? `<small class="hint">${esc(ts.detail)}</small>` : ts?.name ? `<small class="hint">${esc(ts.name)}</small>` : ''}
+        ${button ? `<div class="cr-term">${button}</div>` : ''}</div></div></div>
+    <ul class="cost-note cost-list">
+      <li><b>내 폰:</b> 폰에도 Tailscale 앱을 깔고 <b>PC와 같은 계정</b>으로 켜 두면, QR만 찍어서 바로 연결돼요.</li>
+      <li><b>친구:</b> 아무것도 설치하지 않아도 돼요. 보내 준 링크나 QR로 이름만 입력하고 들어와요.</li>
+      <li>사용법 안내가 끝나면 <b>내 폰 연결·친구 초대 화면</b>을 바로 열어 드려요.</li></ul>`;
+  acts.innerHTML = '<button type="button" class="model-pill" data-act="skip">나중에 하기</button><span class="grow"></span><button type="button" class="model-pill" data-act="prev">이전</button><button type="button" class="model-pill primary" data-act="next">다음</button>';
+  body.querySelector('[data-ts]')?.addEventListener('click', async (e) => {
+    e.target.disabled = true; e.target.textContent = '창을 여는 중…';
+    try { await api('/api/setup/terminal', { kind: 'tailscale' }); toast('PowerShell 창이 열렸어요. 안내대로 진행해 주세요.'); checkTailscale(); }
+    catch (err) { toast(err.message); e.target.disabled = false; }
+  });
+  // Checked now and every few seconds while this step is open (no AI usage), so installing or signing in shows up by itself.
+  if (onPC && !s.tsTimer) { checkTailscale(); s.tsTimer = setInterval(checkTailscale, 4000); }
+  if (!onPC && !ts) s.ts = { status: 'unknown', detail: 'PC 화면에서 확인할 수 있어요.' };
+}
+async function checkTailscale() {
+  const s = setup;
+  if (!s || s.step !== 3) { clearInterval(s?.tsTimer); if (s) s.tsTimer = null; return; }
+  try {
+    const ts = await api('/api/check/tailscale', {});
+    if (setup !== s || s.step !== 3) return;
+    if (JSON.stringify(ts) !== JSON.stringify(s.ts)) { s.ts = ts; renderSetup(); }
+  } catch (err) { if (setup === s && !s.ts) { s.ts = { status: 'unknown', detail: err.message }; renderSetup(); } }
+}
+// After the first-run guide (and the tutorial, skipped or not) the sharing window opens: my phone / a friend.
+let shareNext = false;
+const openShare = () => { shareNext = false; if (!guest && onPC) $('#shareBtn')?.click(); };
 async function finishSetup(save) {
   const s = setup;
   // Saving applies the chosen (by default: recommended) model to every AI.
   const models = Object.fromEntries(IDS.filter((id) => s.models[id]).map((id) => [id, { model: s.models[id].model, effort: s.models[id].effort }]));
   const ok = await update(save ? { models, onboarding: { done: true } } : { onboarding: { done: true } });
   if (!ok) return;
+  clearInterval(s.tsTimer);
   setup = null;
   $('#setup').hidden = true;
+  shareNext = save && s.firstRun;
   if (!state.room.tutorial.done) startTour();
+  else if (shareNext) openShare();
 }
 
 // ---------- tutorial: spotlight each control with a speech bubble ----------
@@ -1471,6 +1532,7 @@ function endTour() {
   $('#tour').hidden = true;
   if (narrow()) { $('#app').classList.remove('side-open'); $('#scrim').hidden = true; }
   if (!state.room.tutorial.done) update({ tutorial: { done: true } });
+  if (shareNext) openShare();
 }
 
 // ---------- sending ----------
@@ -1614,7 +1676,7 @@ if (window.visualViewport) {
   visualViewport.addEventListener('resize', fit); fit();
   input.addEventListener('focus', () => setTimeout(() => { if (distance() < 160) tl.scrollTop = tl.scrollHeight; }, 300));
 }
-$('#debateToggle').onchange = (e) => { if (guest) { guestDiscussion = e.target.checked; renderControls(); } else update({ discussion: e.target.checked }); };
+$('#debateToggle').onchange = (e) => { if (guest) { guestDiscussion = e.target.checked; renderControls(); renderStage(); } else update({ discussion: e.target.checked }); };
 
 // ---------- who will answer: a small preview under the input, from the server's local rules (no AI call) ----------
 let previewTimer = null;

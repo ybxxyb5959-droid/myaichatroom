@@ -13,13 +13,17 @@ export function stickKey(dx, dy, dead = 14) {
   return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft') : (dy > 0 ? 'ArrowDown' : 'ArrowUp');
 }
 
-export function bindHouseControls(panel, { ready, angle, send, error }) {
-  let key = null, busy = false;
+// Characters walk 4 cells a second on screen; steps are sent a little slower than that, so held movement
+// never queues up steps that play out after the key or joystick is let go.
+export const STEP_MS = 260;
+export function bindHouseControls(panel, { ready, angle, send, error, now = () => Date.now() }) {
+  let key = null, busy = false, lastAt = -Infinity;
   const editable = (target) => target?.closest('input, textarea, select, [contenteditable="true"]');
   const clear = () => { key = null; };
   const submit = async (body) => {
-    if (busy) return;
+    if (busy || (body.action === 'move' && now() - lastAt < STEP_MS)) return;
     busy = true;
+    if (body.action === 'move') lastAt = now();
     try { await send(body); } catch (e) { clear(); error(e.message); } finally { busy = false; }
   };
   panel.addEventListener('keydown', (e) => {
@@ -38,7 +42,7 @@ export function bindHouseControls(panel, { ready, angle, send, error }) {
   setInterval(() => {
     if (!ready() || document.hidden || editable(document.activeElement)) return clear();
     if (key) submit({ action: 'move', ...movementFor(key, angle()) });
-  }, 180);
+  }, 60);
   // The on-screen joystick holds a direction like a held arrow key; null lets go.
   const hold = (next) => {
     if (!ready()) return clear();

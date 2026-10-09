@@ -250,9 +250,17 @@ function fixHelp(role, message) {
   const title = document.createElement('h3'), list = document.createElement('ol');
   const item = (...parts) => { const li = document.createElement('li'); li.append(...parts); list.append(li); };
   const link = (href, text) => { const a = document.createElement('a'); a.href = href; a.textContent = text; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
+  // On the PC itself one button opens a PowerShell window that installs Tailscale and signs in.
+  const setupButton = (label) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+    b.onclick = () => action(async () => { await request('/api/setup/terminal', { kind: 'tailscale' }); b.textContent = 'PowerShell 창에서 진행 중…'; b.disabled = true; });
+    return b;
+  };
+  const onPC = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   if (/설치/.test(message)) {
     title.textContent = 'PC에 Tailscale이 필요해요';
-    item(link('https://tailscale.com/download', 'Tailscale 다운로드 ↗'), '에서 PC용 앱을 설치하세요.');
+    if (onPC) item(setupButton('Tailscale 설치하고 로그인하기'), ' 창이 열리면 안내대로 진행하세요.');
+    else item(link('https://tailscale.com/download', 'Tailscale 다운로드 ↗'), '에서 PC용 앱을 설치하세요.');
     item(`PC의 Tailscale 앱을 열고 로그인하세요.${role === 'owner' ? ' 폰에도 같은 계정으로 설치·로그인해 두세요.' : ''}`);
     item('끝나면 아래 [다시 확인]을 누르세요.');
   } else if (/승인/.test(message)) {
@@ -261,17 +269,22 @@ function fixHelp(role, message) {
     item('승인한 뒤 [다시 확인]을 누르세요.');
   } else if (/종료한 뒤 다시 실행/.test(message)) {
     title.textContent = '단톡방 앱을 다시 켜 주세요';
-    item('PC의 단톡방 앱을 완전히 종료한 뒤 start.bat으로 다시 실행하세요.');
+    item('PC의 단톡방 앱을 완전히 종료한 뒤 다시 실행하세요.');
   } else if (/혼자 쓰기/.test(message)) {
     title.textContent = '지금은 "혼자 쓰기" 모드예요';
     const switchMode = document.createElement('button'); switchMode.type = 'button'; switchMode.textContent = '친구와 쓰기로 바꾸기';
     switchMode.onclick = () => action(async () => { await request('/api/share/access', { mode: 'multi' }); await refresh(); await start(role); });
     item('친구를 초대하려면 방 모드를 "친구와 쓰기"로 바꿔야 해요. ', switchMode);
+  } else if (/포트를 다른 연결이 사용 중/.test(message)) {
+    title.textContent = '다른 프로그램이 공유 주소를 쓰고 있어요';
+    item('이 PC에서 다른 단톡방(예: 예전 버전이나 start.bat으로 켠 창)이 휴대폰 연결을 켜 둔 채 실행 중일 수 있어요. 그 창을 끄세요.');
+    item('끈 뒤 아래 [다시 확인]을 누르세요. 꺼진 프로그램이 남긴 설정은 자동으로 정리돼요.');
   } else if (/만료|취소/.test(message)) {
     title.textContent = '초대를 새로 만들어 주세요';
   } else {
     title.textContent = 'PC의 Tailscale을 확인해 주세요';
     item('PC 화면 오른쪽 아래 트레이에서 Tailscale이 켜져 있고 로그인돼 있는지 확인하세요.');
+    if (onPC) item('로그인이 안 돼 있다면 ', setupButton('Tailscale 로그인하기'));
     item('그래도 안 되면 아래 안내 문구를 확인하세요.');
   }
   const detail = linked(message); detail.className = 'share-note share-detail';

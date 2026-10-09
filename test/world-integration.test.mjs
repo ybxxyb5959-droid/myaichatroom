@@ -4,43 +4,28 @@ import fs from 'node:fs';
 import { roomFixture } from './helpers/room.mjs';
 import { shootWorld } from '../lib/worldshot.mjs';
 
-test('speech, custom blocks, signs and movement are one ordinary response; the world survives restart', async (t) => {
+// The house replaced the old block world: ordinary chat no longer describes it, and anything a member still
+// sends for it is dropped while the rest of the reply goes through.
+test('ordinary chat no longer offers the old block world and ignores world commands', async (t) => {
   const s = await roomFixture(t, { ids: ['gpt'], reply: () => ({
     action: 'say', messages: ['같은 턴에 건축할게'],
     block_define: { name: 'blue_tile', pixels: Array(8).fill('aaaaaaaa'), colors: { a: '#2244aa' } },
-    build: [{ op: 'fill', from: [2, 1, 2], to: [3, 1, 3], block: 'planks' },
-      { op: 'place', at: [2, 2, 2], block: 'blue_tile' }, { op: 'sign', at: [3, 2, 3], text: '공동 작업실' }],
-    move: [9, 10],
+    build: [{ op: 'fill', from: [2, 1, 2], to: [3, 1, 3], block: 'planks' }], move: [9, 10],
+    world_look: { y: 1 }, world_shot: { at: [4, 5] },
   }) });
+  const spot = { ...s.app.world.avatars.gpt };
   await s.start(); await s.turn('함께 지어 봐');
-  assert.equal(s.calls.length, 1);
-  assert.equal(s.app.world.blocks.size, 5);
-  assert.equal(s.app.world.blocks.get('2,2,2'), 'blue_tile');
-  assert.equal(s.app.world.signs['3,2,3'].text, '공동 작업실');
-  assert.deepEqual(s.app.world.avatars.gpt, { x: 9, z: 10 });
+  assert.equal(s.calls.length, 1, 'no re-ask for a world map or photo');
+  assert.doesNotMatch(s.calls[0].brief, /건축 월드|"build"|world_shot|block_define/);
+  assert.doesNotMatch(s.calls[0].prompt, /건축 월드/);
+  assert.equal(s.app.world.blocks.size, 0);
+  assert.deepEqual(s.app.world.avatars.gpt, spot, 'the old world character does not move');
   assert.ok(s.app.store.messages.some((m) => m.text === '같은 턴에 건축할게'));
-  const before = s.app.world.view();
-  await s.reopen(); assert.deepEqual(s.app.world.view(), before);
+  assert.ok(!s.app.store.messages.some((m) => m.kind === 'world'));
 });
 
-test('original world_look re-asks within the same turn and then processes the returned action', async (t) => {
-  const s = await roomFixture(t, { ids: ['gpt'], reply: (_c, n) => n === 1 ? { action: 'pass', world_look: { y: 1 } }
-    : { action: 'say', messages: ['지도를 보고 지었어'], build: [{ op: 'place', at: [4, 1, 4], block: 'stone' }] } });
-  await s.start(); await s.turn('둘러 봐');
-  assert.equal(s.calls.length, 2);
-  assert.match(s.calls[1].prompt, /건축 월드 지도/);
-  assert.equal(s.app.world.blocks.get('4,1,4'), 'stone');
-  assert.equal(s.app.room.auto.usage.calls, 2);
-});
-
-test('screenshots are attached to a follow-up and the original viewer renders under its CSP', async (t) => {
-  let options;
-  const png = Buffer.from('89504e470d0a1a0a', 'hex');
-  const s = await roomFixture(t, { ids: ['gpt'], shot: async (_root, _port, value) => { options = value; return png; },
-    reply: (_c, n) => n === 1 ? { action: 'pass', world_shot: { at: [4, 5], night: true, url: 'https://invalid.example' } } : { action: 'pass' } });
-  await s.start(); await s.turn('사진을 봐');
-  assert.equal(options.tx, 4.5); assert.equal(options.tz, 5.5); assert.equal(options.url, undefined);
-  assert.deepEqual(fs.readFileSync(s.calls[1].options.images[0]), png);
+test('the old world viewer still renders under its CSP', async (t) => {
+  const s = await roomFixture(t, { ids: ['gpt'] });
   s.app.world.apply({ op: 'hollow', from: [18, 1, 18], to: [24, 5, 24], block: 'brick' }, 'gpt');
   const shot = await shootWorld(s.root, s.app.server.address().port, { width: 640, height: 480, timeoutMs: 30000 });
   assert.equal(shot.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');

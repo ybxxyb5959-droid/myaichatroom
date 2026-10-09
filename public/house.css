@@ -170,7 +170,14 @@
   .hs-log { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 10px 8px; }
   .house #hsLogToggle { display: none; }
   #hsLogList { flex: 1; min-height: 0; max-height: none; border: 0; background: none; padding: 2px 4px 6px; }
-  .hs-dock[data-height="peek"] #hsLogList { max-height: 2.9em; overflow: hidden; }
+  /* Folded: the newest three spoken lines, bottom-aligned, without the build records; a tap opens the sheet. */
+  .hs-dock[data-height="peek"] #hsLogList { max-height: 7.4em; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; cursor: pointer; }
+  .hs-dock[data-height="peek"] .hs-line.build, .hs-dock[data-height="peek"] .hs-line.event { display: none; }
+  /* Lines read like chat bubbles; what I (or a friend) said sits on the right. */
+  .hs-log .hs-line { align-self: flex-start; max-width: 88%; margin: 3px 0; padding: 5px 10px; border-radius: 12px 12px 12px 4px; background: var(--panel-2, #0000000d); font-size: 14px; line-height: 1.45; }
+  .hs-log .hs-line.mine { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: color-mix(in srgb, var(--accent, #1f9d74) 16%, var(--panel, #fff)); }
+  .hs-log .hs-line.build, .hs-log .hs-line.event { align-self: center; max-width: 100%; padding: 2px 8px; background: none; font-size: 12px; }
+  .hs-log #hsLogList { display: flex; flex-direction: column; overflow: auto; }
   .hs-dock[data-height="peek"] .hs-side, .hs-dock[data-height="peek"] .hs-activity { max-height: 30vh; }
   #hsChat input { font-size: 16px; }
   .hs-pad { bottom: calc(var(--hs-sheet-h, 150px) + 12px); }

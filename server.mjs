@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { ExternalGate } from './lib/external.mjs';
 import { getTailscaleAddress } from './lib/tailscale.mjs';
 import { startTailscaleServe, startTailscaleFunnel } from './lib/tailscale-serve.mjs';
+import { setupScript, openTerminal, tailscaleStatus } from './lib/setup-terminal.mjs';
 import { Sharing } from './lib/sharing.mjs';
 import QRCode from 'qrcode';
 import { Store } from './lib/store.mjs';
@@ -44,7 +45,8 @@ const DEFAULTS = {
   port: 8321, language: 'ko', userName: '방장', roomName: 'AI 단톡방', autoSleepMinutes: 30,
   turnTimeoutSec: 150, historyForPrompt: 40, maxInFlight: 3, speed: 'normal', bins: {},
   imageGen: true, imageCooldownSec: 240, usagePollSec: 120,
-  spark: { enabled: true, backoff: 1.6, maxWaitSec: 1800 },
+  // Members keep talking among themselves until the room sleeps: a passed spark waits only a little longer, at most 10 minutes.
+  spark: { enabled: true, backoff: 1.25, maxWaitSec: 600 },
   boost: { mode: 'auto', timeoutSec: 360, selfCooldownSec: 180, aiRequestCooldownSec: 180 },
   agents: {
     claude: { model: 'sonnet', boost: { model: 'opus' } },
@@ -138,12 +140,17 @@ function saveImage(store, image) {
 }
 
 export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT, cfg = loadConfig(), adapter, store = new Store(root),
-  clock = Date.now, random = Math.random, autoTickMs = 500, usage = null, worldShooter = shootWorld, tailscaleAddress = getTailscaleAddress, tailscaleServe = startTailscaleServe, tailscaleFunnel = startTailscaleFunnel, folderPicker = chooseTaskFolder, taskProvider, taskProviders, wait, pushSend = null } = {}) {
+  clock = Date.now, random = Math.random, autoTickMs = 500, usage = null, worldShooter = shootWorld, tailscaleAddress = getTailscaleAddress, tailscaleServe = startTailscaleServe, tailscaleFunnel = startTailscaleFunnel, folderPicker = chooseTaskFolder, taskProvider, taskProviders, wait, pushSend = null,
+  setupTerminal = openTerminal, tailscaleCheck = tailscaleStatus } = {}) {
   setLang(cfg.language || 'ko');
   adapter ??= new Adapters(root, cfg);
   prepareOriginalData(store, [...IDS, 'grok']);
   const preferences = store.state.assistant || {};
   const available = adapter.available(), clients = new Set(), checking = new Map();
+  // Setup windows opened from the first-run guide, by job ('ai:claude', 'tailscale').
+  const terminals = new Map();
+  // A CLI installed while the app is open is picked up without a restart.
+  const rescanAIs = () => { if (typeof adapter.rescan === 'function') Object.assign(available, adapter.rescan()); };
   const sharing = new Sharing(root, clock), guestJobs = new Map(), guestPending = new Map(), guestChains = new Map();
   const provider = adapter;
   adapter = new Proxy(provider, { get(target, key) {
@@ -313,6 +320,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     }),
     catalog: catalog(), usage: usageView(), kinds: KIND_SHORT, messages: chatTail(300), files: store.listFiles(), play: playView('owner'), lastRead: native.lastRead || 0, push: push.status('owner'),
     activity: { recent: Object.fromEntries(IDS.map((id) => [id, activity.list({ actor: id, limit: 5 })])) },
+    setupTerminals: [...terminals.keys()],
   });
   const publish = () => broadcast('state', view());
   // Building details (house turns and build-world blocks) stay out of the chat timeline; the house screen shows them.
@@ -584,7 +592,10 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
     return { role: 'guest', selfId: guest.id, name: guest.name, roomName: room.roomName, usage: quota, permissions: sharing.access().permissions,
       // Explicit public UI contract. Never spread owner view/preferences here.
       sharedRoom: { name: room.roomName, userName: room.userName, enabled: { ...room.enabled },
-        discussion: room.discussion, boostMode: room.boostMode, chatFrequency: native.chatFrequency, aiIntensity: native.aiIntensity, active: active ? { mode: 'discussion', startedBy: active.startedBy } : null,
+        discussion: room.discussion, boostMode: room.boostMode, chatFrequency: native.chatFrequency, aiIntensity: native.aiIntensity,
+        // Enough of a running discussion for the round table to show who is talking (no models or private reasons).
+        active: active ? { id: active.id, mode: 'discussion', startedBy: active.startedBy, phase: active.phase, synthesizer: active.synthesizer,
+          states: Object.fromEntries(Object.entries(active.states || {}).map(([id, s]) => [id, { status: s.status, phase: s.phase }])) } : null,
         auto: { on: native.running }, autoSleeping: native.sleeping,
         onboarding: { done: true }, tutorial: { done: true } },
       participants: participants(), files, play: playView(`guest:${guest.id}`, guest), icon: guest.icon || null,
@@ -1368,6 +1379,36 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           if (p !== '/events') return json(res, 403, { error: '방장만 사용할 수 있는 기능입니다.' });
         }
       }
+      // First-run setup windows open on the PC itself, so only the PC's own screen may ask for them.
+      if (p === '/api/setup/terminal' || p === '/api/check/tailscale') {
+        if (external || !trusted(req) || req.method !== 'POST') return json(res, 403, { error: '설치·로그인은 방장 PC 화면에서만 할 수 있어요.' });
+        const body = await bodyOf(req);
+        if (p === '/api/check/tailscale') return json(res, 200, { ...await tailscaleCheck(), terminal: terminals.has('tailscale') });
+        const job = body.kind === 'ai' && IDS.includes(body.id) ? { kind: 'ai', id: body.id } : body.kind === 'tailscale' ? { kind: 'tailscale' } : null;
+        if (!job) return json(res, 400, { error: '설정할 항목을 확인하세요.' });
+        const key = job.kind === 'ai' ? `ai:${job.id}` : 'tailscale';
+        // A window lost track of (say, a terminal app that never reports the close) stops blocking after 15 minutes.
+        if (terminals.has(key) && clock() - terminals.get(key).at < 15 * 60000) return json(res, 409, { error: '이미 설정 창이 열려 있어요. 작업 표시줄의 PowerShell 창을 확인해 주세요.' });
+        rescanAIs();
+        const bin = job.kind === 'ai' && available[job.id] ? { claude: adapter.bins?.claude, gpt: adapter.bins?.codex, gemini: adapter.bins?.agy }[job.id] : null;
+        const entry = { at: clock() };
+        terminals.set(key, entry);
+        entry.child = setupTerminal(setupScript(job, { installed: bin || null }), { onExit: async () => {
+          if (terminals.get(key) === entry) terminals.delete(key);
+          if (closed) return;
+          // The window closed: look for what was installed and check the sign-in again (no usage).
+          rescanAIs();
+          if (job.kind === 'ai' && available[job.id]) {
+            const result = await adapter.loginStatus(job.id).catch((error) => ({ status: 'unknown', detail: error.message }));
+            room.checks[job.id].login = { ...result, detail: redact(result.detail), at: clock() };
+            if (job.id === 'gpt' && result.status === 'ok') await refreshModels('gpt').catch(() => {});
+            persist();
+          }
+          publish();
+        } });
+        publish();
+        return json(res, 200, { ok: true });
+      }
       if (p === '/api/share/pairing') {
         if (external || !trusted(req)) return json(res, 403, { error: '기기 연결 승인은 방장 PC에서만 가능합니다.' });
         if (req.method === 'GET') return json(res, 200, { requests: sharing.pendingPairs() });
@@ -1524,6 +1565,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           persist(); publish(); return json(res, 200, view());
         }
         if (p === '/api/check/login') {
+          rescanAIs();
           await Promise.all((IDS.includes(body.id) ? [body.id] : IDS).map(async (id) => {
             const result = available[id] ? await adapter.loginStatus(id) : { status: 'missing', detail: 'CLI가 설치되어 있지 않습니다.' };
             room.checks[id].login = { ...result, detail: redact(result.detail), at: clock() };

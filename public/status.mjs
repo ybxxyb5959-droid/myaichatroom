@@ -43,5 +43,7 @@ export function memberStatus({ available, enabled, busy, checking, loginStatus, 
   }
   if (call?.status === 'fail' && call.kind === 'model') return { key: 'model', text: HEALTH_TEXT.model };
   if (call?.status === 'ok' || (call?.status === 'fail' && call.kind !== 'quota')) return { key: 'active', text: '활성' };
+  // Signed in but not called yet (a fresh install): the guide already says "연결됐어요", so the member list agrees.
+  if (loginStatus === 'ok') return { key: 'active', text: '연결됨' };
   return { key: 'check', text: '연결 확인 필요' };
 }

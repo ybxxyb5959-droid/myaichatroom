@@ -118,3 +118,22 @@ test('phase 5: progress is batched per work unit, flushed after five turns or wh
   await runtime.tick();
   assert.equal(news(s).length, 3);
 });
+
+test('talking in the house screen gets a reply there right away, even with house work off, and never reaches ordinary chat', async (t) => {
+  const s = await roomFixture(t, { ids: ['claude', 'gpt'], discussionReply: (c) => (/집 화면에서 말했어/.test(c.prompt) ? { ok: true, text: '{"say":"창가 좋다, 햇빛 잘 들겠어"}' } : study()) });
+  await s.start();
+  const sent = await s.post('/api/send', { text: '@ChatGPT 소파 창가 어때?', mode: 'house' });
+  assert.equal(sent.status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  const talk = s.calls.filter((c) => /집 화면에서 말했어/.test(c.prompt));
+  assert.equal(talk.length, 1); assert.equal(talk[0].id, 'gpt', 'the member named answers');
+  assert.equal(talk[0].options.usageKind, 'house');
+  const reply = s.app.store.messages.findLast((m) => m.kind === 'house-say');
+  assert.deepEqual([reply.from, reply.text, reply.replyTo], ['gpt', '창가 좋다, 햇빛 잘 들겠어', sent.value.msg.id]);
+  assert.ok(s.app.house.s.log.some((l) => l.id === 'gpt' && l.text === '창가 좋다, 햇빛 잘 들겠어'), 'shown as a bubble in the house');
+  assert.equal(houseCalls(s).length, 0, 'no building was started');
+  await s.post('/api/send', { text: '다들 어디 있어?', mode: 'house' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(s.calls.filter((c) => /집 화면에서 말했어/.test(c.prompt)).at(-1).id, 'claude', 'without a name, the next member takes it');
+  assert.equal(s.app.runtime.store.after(0).some((m) => m.mode === 'house' || m.kind === 'house-say'), false);
+});

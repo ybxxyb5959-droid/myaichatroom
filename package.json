@@ -1,6 +1,6 @@
 {
   "name": "ai-chatroom",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "A personal AI group chat for Windows",
   "author": "AI Chatroom contributors",
   "license": "MIT",
@@ -43,7 +43,10 @@
     ],
     "win": {
       "icon": "public/app.ico",
-      "target": ["nsis", "portable"],
+      "target": [
+        "nsis",
+        "portable"
+      ],
       "signAndEditExecutable": false
     },
     "nsis": {

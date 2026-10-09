@@ -60,7 +60,7 @@ test('Funnel is explicit, verifies the public flag, and never replaces another r
   const service = await startTailscaleFunnel(target, { execute });
   assert.equal(service.public, true);
   assert.deepEqual(calls[2], ['funnel', '--bg', '--https=8443', target]);
-  await assert.rejects(startTailscaleFunnel(target, { execute }), /덮어쓰지/);
+  await assert.rejects(startTailscaleFunnel(target, { execute, alive: async () => true }), /덮어쓰지/);
   config.Web[endpoint].Handlers['/'].Proxy = 'http://127.0.0.1:43211';
   await service.stop();
   assert.ok(config.AllowFunnel[endpoint], 'another target is left alone');
@@ -78,4 +78,29 @@ test('a Funnel approval URL is returned to the owner without silently enabling a
   } }), /계정 승인 필요: https:\/\/login.tailscale.com\/f\/test/);
   assert.equal(calls.filter((a) => a.includes('--bg')).length, 1);
   assert.ok(!calls.some((a) => a[0] === 'serve' && a.includes('--bg')));
+});
+
+test('a leftover mapping to a dead local port is cleared, but a live or foreign one is never replaced', async () => {
+  const endpoint = 'pc.example.ts.net:8444', target = 'http://127.0.0.1:43210';
+  const leftover = (proxy) => ({ TCP: { 8444: { HTTPS: true } }, Web: { [endpoint]: { Handlers: { '/': { Proxy: proxy } } } } });
+  const run = (initial, alive) => {
+    let config = initial; const calls = [];
+    const execute = async (_bin, args) => {
+      calls.push(args);
+      if (args[0] === 'status') return { stdout: '{"BackendState":"Running","Self":{"DNSName":"pc.example.ts.net."}}' };
+      if (args[1] === 'status') return { stdout: JSON.stringify(config) };
+      if (args.includes('off')) config = {};
+      if (args.includes('--bg')) config = leftover(target);
+      return { stdout: '' };
+    };
+    return { calls, go: () => startTailscaleServe(target, { execute, port: 8444, alive: async () => alive }) };
+  };
+  const stale = run(leftover('http://127.0.0.1:62044'), false);
+  assert.equal((await stale.go()).url, 'https://pc.example.ts.net:8444');
+  assert.deepEqual(stale.calls[2], ['serve', '--https=8444', 'off']);
+  const live = run(leftover('http://127.0.0.1:62044'), true);
+  await assert.rejects(live.go(), /8444 포트를 다른 연결이 사용 중/);
+  assert.ok(live.calls.every((args) => !args.includes('off')));
+  const foreign = run(leftover('http://192.168.0.5:80'), false);
+  await assert.rejects(foreign.go(), /덮어쓰지/);
 });

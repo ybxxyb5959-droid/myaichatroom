@@ -103,12 +103,12 @@ test('a quiet room wakes only one member and a pass increases the next silence d
   assert.equal(ordinaryCalls().length, before + 1);
   const starter = ordinaryCalls().at(-1).id;
   const at = s.clock.now;
-  await s.advance(383999);
+  await s.advance(299999);
   assert.equal(ordinaryCalls().length, before + 1);
   await s.advance(1);
   assert.equal(ordinaryCalls().length, before + 2);
   assert.notEqual(ordinaryCalls().at(-1).id, starter);
-  assert.equal(s.clock.now - at, 384000);
+  assert.equal(s.clock.now - at, 300000, "a pass makes the next spark wait 1.25x, not 1.6x");
 });
 
 test('stale non-urgent speech is dropped after three new messages, but data actions still execute', async (t) => {

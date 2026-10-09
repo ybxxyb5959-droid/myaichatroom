@@ -132,29 +132,31 @@ async function launch() {
     console.log('EMPTY_SCREEN_SMOKE ' + JSON.stringify(emptyScreen));
     const sharingScreen = await window.webContents.executeJavaScript(`(async () => {
       const loaded = Date.now() + 5000;
-      while (!document.querySelector('.share-dialog [data-usage]') && Date.now() < loaded)
+      while (!document.querySelector('.share-dialog [data-go]') && Date.now() < loaded)
         await new Promise(resolve => setTimeout(resolve, 25));
-      if (!document.querySelector('.share-dialog [data-usage]')) throw new Error('공유 화면 모듈이 로드되지 않았습니다.');
+      if (!document.querySelector('.share-dialog [data-go]')) throw new Error('공유 화면 모듈이 로드되지 않았습니다.');
       document.querySelector('#shareBtn').click();
-      const deadline = Date.now() + 5000;
-      while (!document.querySelector('[data-usage]').textContent && Date.now() < deadline)
-        await new Promise(resolve => setTimeout(resolve, 25));
       const panel = document.querySelector('.share-dialog');
       const bounds = panel.getBoundingClientRect();
-      const result = { open: panel.open, fits: bounds.left >= 0 && bounds.right <= innerWidth,
+      const choices = [...panel.querySelectorAll('[data-view="home"] .share-choice b')].map(b => b.textContent);
+      panel.querySelector('[data-go="manage"]').click();
+      const managed = Date.now() + 5000;
+      while (!panel.querySelector('[data-usage]').textContent && Date.now() < managed)
+        await new Promise(resolve => setTimeout(resolve, 25));
+      const result = { open: panel.open, fits: bounds.left >= 0 && bounds.right <= innerWidth, choices,
         usage: panel.querySelector('[data-usage]').textContent,
-        ownerQR: panel.querySelector('[data-pair]').textContent,
-        friendQR: panel.querySelector('[data-invite]').textContent,
         defaultLimit: panel.querySelector('[name=total]').value,
+        steps: [...document.querySelectorAll('#setupSteps li')].map(li => li.textContent),
         manifest: document.querySelector('link[rel=manifest]').getAttribute('href') };
       panel.close();
       const registration = await navigator.serviceWorker.ready;
       result.worker = !!registration.active;
       return result;
     })()`);
-    if (!sharingScreen.open || !sharingScreen.fits || !sharingScreen.usage.startsWith('오늘 공용 0/100회 사용')
-      || sharingScreen.ownerQR !== '내 폰 연결 QR 만들기' || sharingScreen.friendQR !== '새 친구 초대 링크 만들기'
-      || sharingScreen.defaultLimit !== '100' || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
+    if (!sharingScreen.open || !sharingScreen.fits || sharingScreen.choices.join(',') !== '친구 초대하기,내 폰 연결하기'
+      || !sharingScreen.usage.startsWith('오늘 0 / 100회 사용') || sharingScreen.defaultLimit !== '100'
+      || sharingScreen.steps.join(',') !== 'AI 연결,모델 고르기,폰·친구,시작'
+      || sharingScreen.manifest !== '/manifest.webmanifest' || !sharingScreen.worker)
       throw new Error('공유 메뉴·PWA 확인 실패: ' + JSON.stringify(sharingScreen));
     console.log('SHARING_SCREEN_SMOKE ' + JSON.stringify(sharingScreen));
     const localRequest = async (route, body) => {
@@ -177,6 +179,8 @@ async function launch() {
     await localRequest('/api/share/pairing', { id: requests.requests[0].id, approve: true });
     const paired = await remoteRequest('owner', '/api/share/pair-status', { token: ownerToken, challenge: pending.data.challenge });
     if (paired.status !== 200 || (await remoteRequest('owner','/api/state',undefined,paired.cookie)).status !== 200) throw new Error('방장 폰 페어링 실패');
+    // The friend guide opens the public (Funnel) connection first, as the sharing window does.
+    await localRequest('/api/share/connect', { public: true });
     const friendInvite = await localRequest('/api/share/invite', { role: 'guest' });
     const friendToken = new URLSearchParams(new URL(friendInvite.link).hash.slice(1)).get('token');
     const joined = await remoteRequest('guest','/api/share/redeem',{token:friendToken,name:'스모크 친구'});

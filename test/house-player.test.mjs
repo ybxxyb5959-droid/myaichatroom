@@ -90,10 +90,10 @@ test('keyboard controls ignore typing, serialize requests and stop on close, blu
     if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
     if (oldDocument === undefined) delete globalThis.document; else globalThis.document = oldDocument;
   });
-  let tick, ready = true, release;
+  let tick, ready = true, release, clock = 0;
   t.mock.method(globalThis, 'setInterval', (fn) => { tick = fn; return 1; });
   const calls = [];
-  const { clear, hold } = bindHouseControls(panel, { ready: () => ready, angle: () => 0,
+  const { clear, hold } = bindHouseControls(panel, { ready: () => ready, angle: () => 0, now: () => (clock += 1000),
     send: (body) => { calls.push(body); return new Promise((resolve) => { release = resolve; }); },
     error: (message) => assert.fail(message) });
   const press = (key, edit = false) => panel.handlers.keydown({
@@ -114,6 +114,15 @@ test('keyboard controls ignore typing, serialize requests and stop on close, blu
   hold(stickKey(0, -40)); assert.deepEqual(calls.at(-1), { action: 'move', dx: 0, dz: -1 });
   release(); await Promise.resolve(); tick(); assert.equal(calls.length, 5);
   release(); await Promise.resolve(); hold(null); tick(); assert.equal(calls.length, 5);
+  // Steps never come faster than the character walks, so nothing is left to play out after letting go.
+  let paced = 0; const sent = [];
+  const pacedControls = bindHouseControls(target(), { ready: () => true, angle: () => 0, now: () => paced, send: async (body) => { sent.push(body); }, error: assert.fail });
+  pacedControls.hold('ArrowUp'); await Promise.resolve();
+  paced = 100; tick(); await Promise.resolve();
+  pacedControls.hold('ArrowLeft'); await Promise.resolve();
+  assert.equal(sent.length, 1, 'a second step within 260 ms waits');
+  paced = 270; tick(); await Promise.resolve();
+  assert.deepEqual(sent.at(-1), { action: 'move', dx: -1, dz: 0 });
   assert.equal(stickKey(3, 4), null); assert.equal(stickKey(30, 5), 'ArrowRight'); assert.equal(stickKey(-2, 30), 'ArrowDown');
 });
 
