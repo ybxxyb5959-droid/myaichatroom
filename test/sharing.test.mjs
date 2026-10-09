@@ -1173,3 +1173,17 @@ test('with Talk off a friend still gets one answer, with no follow-ups among the
   for (let i = 0; i < 5; i++) await f.pump();
   assert.equal(f.calls.length, 1, 'one answer and no chain to GPT');
 });
+
+test('the join screen learns who invited the friend, only for a valid guest link, without using the invite up', async t => {
+  const f = await fixture(t);
+  await f.owner('/api/room', { userName: '용빈' });
+  const invitation = await f.invite('guest');
+  const asked = await f.remote('/api/share/invite-info', { body: { token: invitation.token } });
+  assert.equal(asked.status, 200);
+  assert.deepEqual(asked.body, { host: '용빈' });
+  assert.equal((await f.remote('/api/share/invite-info', { body: { token: 'x'.repeat(43) } })).status, 404);
+  const owner = await f.invite('owner');
+  assert.equal((await f.remote('/api/share/invite-info', { body: { token: owner.token } })).status, 404, 'an owner pairing link names nobody');
+  await f.join('민수');
+  assert.equal((await f.remote('/api/share/invite-info', { body: { token: invitation.token } })).status, 200, 'asking did not consume the link');
+});

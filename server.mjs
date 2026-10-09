@@ -1093,7 +1093,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (external.public) {
         const get = [...guestAssets, '/', '/index.html', '/join', '/logout', '/api/state', '/api/house', '/api/gallery', '/api/gallery/file', '/api/share/session', '/events', '/guest.js',
           '/manifest.webmanifest', '/sw.js', '/pwa.js', '/share.css', '/join.js', '/icon-192.png', '/icon-512.png', '/offline.html'];
-        const allowed = req.method === 'GET' ? get.includes(p) : req.method === 'POST' && ['/api/share/redeem', '/api/share/rejoin', '/api/share/presence', '/api/send', '/api/react', '/api/play', '/api/house/player', '/api/search', '/api/profile', '/api/read', '/api/summary', '/api/push/subscribe', '/api/push/unsubscribe', '/api/house/ballot'].includes(p);
+        const allowed = req.method === 'GET' ? get.includes(p) : req.method === 'POST' && ['/api/share/redeem', '/api/share/invite-info', '/api/share/rejoin', '/api/share/presence', '/api/send', '/api/react', '/api/play', '/api/house/player', '/api/search', '/api/profile', '/api/read', '/api/summary', '/api/push/subscribe', '/api/push/unsubscribe', '/api/house/ballot'].includes(p);
         if (!allowed) return json(res, 403, { error: '공개 연결에서는 친구 채팅만 사용할 수 있습니다.' });
       }
       if (p === '/api/tasks/attachments') {
@@ -1276,6 +1276,12 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
       if (external.share) {
         if (p === '/api/share/pairing') return json(res, 403, { error: '기기 연결 승인은 방장 PC에서만 가능합니다.' });
         if (req.method === 'GET' && p === '/join') return await serve(res, path.join(ROOT, 'public', 'join.html'));
+        // The join screen names who invited the friend, and only for a link that is still valid.
+        if (req.method === 'POST' && p === '/api/share/invite-info') {
+          sharing.throttle(req.socket.remoteAddress);
+          const body = await bodyOf(req);
+          return sharing.isGuestInvite(body.token) ? json(res, 200, { host: room.userName }) : json(res, 404, { error: '초대 링크를 확인해 주세요.' });
+        }
         if (req.method === 'POST' && p === '/api/share/redeem') {
           sharing.throttle(req.socket.remoteAddress);
           const body = await bodyOf(req);
@@ -1490,7 +1496,12 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
           if (typeof body.discussion === 'boolean') room.discussion = body.discussion;
           if (body.boostMode !== undefined) native.boostMode = room.boostMode = body.boostMode;
           if (typeof body.roomName === 'string') room.roomName = cleanTitle(body.roomName) || cfg.roomName || 'AI 단톡방';
-          if (typeof body.userName === 'string') room.userName = cleanTitle(body.userName) || cfg.userName || '방장';
+          if (typeof body.userName === 'string') {
+            // A rename is said in the chat, so every AI (and its notes) moves to the new name from the next turn.
+            const before = room.userName;
+            room.userName = cleanTitle(body.userName) || cfg.userName || '방장';
+            if (before !== room.userName) post({ from: 'system', kind: 'presence', text: `방장이 이름을 ${before}에서 ${room.userName}(으)로 바꿨어요. 이제 ${room.userName}(이)라고 불러 주세요.` });
+          }
           if (typeof body.webSearch === 'boolean') { room.webSearch = body.webSearch; room.autoSearch = null; }
           if (typeof body.onboarding?.done === 'boolean') room.onboarding.done = body.onboarding.done;
           if (typeof body.tutorial?.done === 'boolean') room.tutorial.done = body.tutorial.done;
