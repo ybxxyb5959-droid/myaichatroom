@@ -1051,6 +1051,7 @@ export function createAssistantServer({ root = process.env.CHATROOM_HOME || ROOT
             if (p === '/api/tasks/plans') return json(res, 200, taskAI.plans.handle(body));
             if (p === '/api/tasks/changes') return json(res, 200, taskAI.changes.handle(body));
             if (body?.action === 'start') return json(res, 202, taskAI.start(body));
+            if (body?.action === 'context.compress') return json(res, 202, taskAI.compress(body));
             if (body?.action === 'cancel') return json(res, 200, taskAI.cancel(body));
             if (body?.action === 'image.providers') return json(res, 200, await taskAI.imageProviderStatus());
             if (body?.action === 'image.describe') return json(res, 200, taskAI.describeImageSource(body));

@@ -327,6 +327,13 @@ function messageNode(m) {
     (people.length ? actions : picker).append(button);
   }
   node.querySelector('.m-body').append(actions);
+  if (continueEligible(m)) {
+    const go = document.createElement('button'); go.type = 'button'; go.className = 'task-continue-link';
+    go.textContent = '🛠️ 작업대에서 이어하기 →';
+    go.title = '질문과 답변을 작업대 요청 초안으로 옮깁니다. AI 호출이나 파일 변경은 실행 전까지 일어나지 않아요.';
+    go.onclick = () => window.dispatchEvent(new CustomEvent('task-continue', { detail: { text: continueDraft(m) } }));
+    node.querySelector('.m-body').append(go);
+  }
   if (who) node.style.setProperty('--c', who.color);
   node.querySelector('[data-note]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.note.path); });
   node.querySelector('[data-attachment]')?.addEventListener('click', () => { setWorkspaceOpen(true); openFile(m.attach.path); });
@@ -370,6 +377,30 @@ function renderSaved() {
     li.querySelector('.link-btn').onclick = async () => { await playAct({ action: 'bookmark.toggle', id: item.id }).catch(() => {}); renderSaved(); };
     return li;
   }) : [Object.assign(document.createElement('li'), { className: 'saved-empty', textContent: '아직 저장한 명장면이 없어요. 메시지 아래 ☆ 저장을 눌러 보세요.' })]));
+}
+// ---------- continue a substantial answer on the workbench (owner only; the click calls no AI) ----------
+const STRUCTURED = /^#{1,3} |^\s*\d+\.\s|^\s*[-*]\s|```|\|.+\|/m;
+function continueEligible(m) {
+  if (guest || !member(m.from) || m.playId || m.kind || !m.text || ['opinion', 'review'].includes(m.phase)) return false;
+  if (m.phase === 'final') return true;
+  const asked = state.messages.find((x) => x.id === m.replyTo && x.from === 'user');
+  if ((m.deep || asked?.workbenchEligible) && (m.text.length >= 200 || m.text.length >= 80 && STRUCTURED.test(m.text))) return true;
+  return m.text.length >= 500 && STRUCTURED.test(m.text);
+}
+function continueDraft(m) {
+  const clip = (text, n) => (text.length > n ? `${text.slice(0, n)}…` : text);
+  const run = m.runId ? state.messages.filter((x) => x.runId === m.runId) : [];
+  const question = state.messages.find((x) => x.id === m.replyTo && x.from === 'user')
+    || state.messages.filter((x) => x.from === 'user' && x.id < (run[0]?.id ?? m.id)).at(-1);
+  const parts = ['[단톡방에서 이어온 작업]'];
+  if (question) parts.push(`원래 질문 (${authorName(question)}): ${clip(question.text || '', 1500)}`);
+  if (m.phase === 'final') {
+    const opinions = run.filter((x) => member(x.from) && ['opinion', 'review'].includes(x.phase));
+    if (opinions.length) parts.push(`토론 의견:\n${opinions.map((o) => `- ${nameOf(o.from)} · ${PHASES[o.phase]}: ${clip(o.text, 900)}`).join('\n')}`);
+    parts.push(`최종 종합 (${nameOf(m.from)}):\n${clip(m.text, 6000)}`);
+  } else parts.push(`AI 답변 (${nameOf(m.from)}${m.deep ? ' · 진심모드' : ''}):\n${clip(m.text, 6000)}`);
+  parts.push('이어서 할 일: (위 내용을 바탕으로 작업대에서 할 일을 적어 주세요. 예: 이 내용으로 보고서(report.docx)를 만들어 줘.)');
+  return parts.join('\n\n').slice(0, 15500);
 }
 const isDiscussion = (m) => m.mode === 'discussion' || /^(opinion|review|final)$/.test(m.phase || '');
 function runFooter(end) {

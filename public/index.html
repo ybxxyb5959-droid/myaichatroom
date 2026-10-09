@@ -121,34 +121,18 @@
           새 작업
         </button>
         <nav class="task-sidebar-lists" aria-label="작업 목록">
-          <section class="task-sidebar-group" aria-labelledby="taskProjectsHeading">
-            <h2 id="taskProjectsHeading">프로젝트</h2>
-            <form id="taskProjectForm" class="task-project-form">
-              <input id="taskProjectName" aria-label="프로젝트 이름" placeholder="프로젝트 이름" maxlength="100" required>
-              <div><button id="taskProjectAdd" type="submit">＋ 추가</button><button id="taskProjectRename" type="button">이름 변경</button></div>
-              <button id="taskProjectLinked" type="button" title="이름을 비워 두면 선택한 폴더 이름으로 만듭니다">폴더 선택해서 새 프로젝트</button>
-            </form>
-            <div id="taskProjects"></div>
-            <div class="task-folder" id="taskFolder">
-              <span id="taskFolderStatus" role="status">폴더 미연결</span>
-              <strong id="taskFolderName"></strong>
-              <p id="taskFolderPath"></p>
-              <p id="taskFolderError" role="alert" hidden></p>
-              <div class="task-folder-actions">
-                <button id="taskFolderPick" type="button" disabled>폴더 연결</button>
-                <button id="taskFolderDisconnect" type="button" title="연결 정보만 해제합니다. PC의 파일은 삭제하지 않습니다." disabled>연결 해제</button>
-                <button id="taskFolderCheck" type="button" disabled>상태 확인</button>
-              </div>
-            </div>
-          </section>
+          <label class="task-search"><span class="sr-only">대화·세션 검색</span><input id="taskSearch" type="search" placeholder="대화·세션 검색" autocomplete="off"></label>
           <section class="task-sidebar-group" aria-labelledby="taskHistoryHeading">
-            <h2 id="taskHistoryHeading">대화 세션</h2>
+            <h2 id="taskHistoryHeading">최근 작업 세션</h2>
             <div id="taskSessions"></div>
           </section>
-          <section class="task-sidebar-group task-file-group" aria-labelledby="taskFilesHeading">
-            <h2 id="taskFilesHeading">프로젝트 파일 <button id="taskFilesRefresh" type="button" disabled>새로고침</button></h2>
-            <p id="taskFileStatus" class="task-sidebar-empty" role="status">폴더를 연결하면 파일 목록이 표시됩니다.</p>
-            <ul id="taskFileTree" class="task-file-tree" aria-label="프로젝트 파일 목록"></ul>
+          <section class="task-sidebar-group" aria-labelledby="taskRunningHeading">
+            <h2 id="taskRunningHeading">진행 중인 작업</h2>
+            <p id="taskRunning" class="task-sidebar-empty" role="status">진행 중인 AI 작업이 없습니다.</p>
+          </section>
+          <section class="task-sidebar-group task-pending-group" aria-labelledby="taskPendingHeading">
+            <h2 id="taskPendingHeading">승인 대기 중인 결과물</h2>
+            <p id="taskPendingCount" class="task-sidebar-empty"></p>
           </section>
           <section class="task-sidebar-group" aria-labelledby="taskPlansHeading">
             <h2 id="taskPlansHeading">이 세션의 작업 계획</h2>
@@ -165,7 +149,18 @@
             <p id="taskProposalListStatus" class="task-sidebar-empty">아직 수정안이 없습니다.</p>
             <div id="taskProposals"></div>
           </section>
+          <section class="task-sidebar-group task-file-group" aria-labelledby="taskFilesHeading">
+            <h2 id="taskFilesHeading">프로젝트 파일 <button id="taskFilesRefresh" type="button" disabled>새로고침</button></h2>
+            <p id="taskFileStatus" class="task-sidebar-empty" role="status">폴더를 연결하면 파일 목록이 표시됩니다.</p>
+            <ul id="taskFileTree" class="task-file-tree" aria-label="프로젝트 파일 목록"></ul>
+          </section>
         </nav>
+        <section class="task-sidebar-group task-context" aria-labelledby="taskContextHeading">
+          <h2 id="taskContextHeading">컨텍스트 관리</h2>
+          <div id="taskContextSummary" class="task-sidebar-empty">아직 압축 요약이 없습니다. 대화가 길어지면 압축해 두면 다음 AI 호출과 다른 AI 인계에 요약이 함께 전달됩니다.</div>
+          <button id="taskCompress" type="button" title="선택한 AI로 이 세션의 대화를 요약합니다. AI 호출 1회를 사용하고 원본 대화는 지우지 않습니다." disabled>대화 압축 (AI 1회)</button>
+          <p id="taskCompressStatus" class="task-sidebar-empty" role="status"></p>
+        </section>
         <details class="task-storage"><summary>저장 공간 관리</summary>
           <p id="taskStorageInfo" role="status">백업·문서 변환 캐시가 차지하는 공간을 확인하고, 더 이상 필요 없는 것만 정리합니다. 적용·복구에 필요한 백업은 절대 지우지 않습니다.</p>
           <div class="task-folder-actions"><button id="taskStorageCheck" type="button">상태 확인</button><button id="taskStoragePrune" type="button" disabled>불필요한 것 정리</button></div>
@@ -375,11 +370,38 @@
           </div>
           <div class="task-card">
             <div class="task-card-top">
-              <span id="taskCardProject" class="task-card-chip" title="현재 프로젝트">📁 프로젝트 없음</span>
+              <details class="task-card-menu task-project-menu" id="taskProjectMenu">
+                <summary id="taskCardProject" class="task-card-chip" title="프로젝트 선택·관리">📁 프로젝트 없음</summary>
+                <div class="task-card-menu-body task-project-menu-body" aria-label="프로젝트">
+                  <h2 id="taskProjectsHeading">프로젝트</h2>
+                  <form id="taskProjectForm" class="task-project-form">
+                    <input id="taskProjectName" aria-label="프로젝트 이름" placeholder="프로젝트 이름" maxlength="100" required>
+                    <div><button id="taskProjectAdd" type="submit">＋ 추가</button><button id="taskProjectRename" type="button">이름 변경</button></div>
+                    <button id="taskProjectLinked" type="button" title="이름을 비워 두면 선택한 폴더 이름으로 만듭니다">폴더 선택해서 새 프로젝트</button>
+                  </form>
+                  <div id="taskProjects"></div>
+                  <div class="task-folder" id="taskFolder">
+                    <span id="taskFolderStatus" role="status">폴더 미연결</span>
+                    <strong id="taskFolderName"></strong>
+                    <p id="taskFolderPath"></p>
+                    <p id="taskFolderError" role="alert" hidden></p>
+                    <div class="task-folder-actions">
+                      <button id="taskFolderPick" type="button" disabled>폴더 연결</button>
+                      <button id="taskFolderDisconnect" type="button" title="연결 정보만 해제합니다. PC의 파일은 삭제하지 않습니다." disabled>연결 해제</button>
+                      <button id="taskFolderCheck" type="button" disabled>상태 확인</button>
+                    </div>
+                  </div>
+                </div>
+              </details>
               <select id="taskModeSelect" class="task-card-select" aria-label="작업 방식">
-                <option value="solo">단독 · 하나의 AI가 처리</option>
-                <option value="collab" disabled>협업 · AI끼리 공유하며 개선 (준비 중)</option>
-                <option value="split" disabled>분담 · 각자 맡아 처리 (준비 중)</option>
+                <option value="solo">단독 · 한 AI가 처리</option>
+                <option value="split">분담 · 역할별로 나눠 처리</option>
+                <option value="collab">협업 · 의견→교차 검토→통합</option>
+              </select>
+              <select id="taskPermSelect" class="task-card-select" aria-label="실행 권한" title="AI 실행 권한">
+                <option value="default">권한: 기본</option>
+                <option value="auto">권한: 자동 승인</option>
+                <option value="ask">권한: 권한 요청</option>
               </select>
               <details class="task-card-menu"><summary>보조</summary>
                 <div class="task-card-menu-body">
@@ -398,6 +420,7 @@
             <div class="task-card-bottom">
               <button id="taskPlus" class="task-card-plus" type="button" aria-expanded="false" aria-controls="taskTray" title="파일 첨부 · 문서 분석 · 이미지 작업 · 예시 · 전송 동의">＋</button>
             <select id="taskAISelect" class="task-card-select task-card-ai" aria-label="작업대 AI 선택"><option value="claude">Claude Code · Sonnet</option></select>
+            <span id="taskTeamPick" class="task-team-pick" role="group" aria-label="참여 AI 2~3명" hidden></span>
               <select id="taskActionSelect" class="task-card-select" aria-label="작업 종류">
                 <option value="taskExploreRun">자동 탐색 분석</option>
                 <option value="taskAIRun">선택 파일 분석</option>
@@ -409,7 +432,7 @@
               <button id="taskSend" class="task-card-send" type="button" aria-label="실행" title="선택한 작업을 실행합니다 (Ctrl+Enter)" disabled>↑</button>
             </div>
           </div>
-          <p class="task-card-status"><span id="taskAIStatus" role="status">AI 연결 확인 중…</span></p>
+          <p class="task-card-status"><span id="taskAIStatus" role="status">AI 연결 확인 중…</span> <span id="taskEstimate" class="task-estimate"></span></p>
           <div class="task-actions-source" hidden>
               <button id="taskAIRun" type="button" class="task-start" disabled>AI 분석 실행</button>
               <button id="taskChangesRun" type="button" class="task-start" disabled title="파일 만들기·수정·이름 변경·이동·삭제와 Word·Excel·PowerPoint 문서 생성·수정 변경안을 만듭니다. 승인 전에는 파일을 바꾸지 않습니다.">파일·문서 변경안 작성</button>

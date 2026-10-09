@@ -635,6 +635,8 @@ function renderAI() {
   $('#taskAIStatus').textContent = aiInfo?.storageError || (execution ? `${labels[execution.status]}${execution.error ? ` · ${execution.error}` : ''}`
     : selectedProvider()?.available ? `${selectedProvider().name} · 실행 시 로그인과 안전 설정 확인${selectedProvider().modes?.length && selectedProvider().modes.length < 7 ? ` · 지원 작업: ${selectedProvider().modes.join(', ')}` : ''}` : '선택한 AI CLI가 없거나 연결 상태를 확인하지 못했습니다.');
   if (aiInfo?.running && !analysisActive()) $('#taskAIStatus').textContent = '다른 세션에서 AI가 실행 중입니다.';
+  renderTeamPick();
+  renderDrawer();
   renderProposalList();
   renderPlanList();
   changesUI.renderList();
@@ -645,7 +647,30 @@ function renderAI() {
   controls();
 }
 
+const permission = () => project()?.permission || 'default';
+const consentOK = () => $('#taskAIConsent').checked || (permission() === 'auto' && project()?.analysisConsent === true);
+const PERSONA = { claude: { avatar: 'claude', name: 'Claude' }, codex: { avatar: 'gpt', name: 'ChatGPT (Codex)' }, gemini: { avatar: 'gemini', name: 'Gemini' } };
+const FINAL_OF = { taskExploreRun: 'explore', taskAIRun: 'analysis', taskPlanRun: 'plan', taskChangesRun: 'changes' };
+const ACTION_LABEL = { taskExploreRun: '자동 탐색 분석', taskAIRun: '선택 파일 분석', taskChangesRun: '파일·문서 변경안', taskPlanRun: '작업 계획', taskProposalGenerate: '수정안 생성' };
+const teamPicked = new Set();
+const workMode = () => $('#taskModeSelect').value;
+// Expected AI calls for what is selected now (the explore budget grows with the task's difficulty).
+function estimate() {
+  const action = $('#taskActionSelect').value, single = action === 'taskAIRun' || action === 'taskProposalGenerate' ? '1회' : '5~10회';
+  if (workMode() === 'solo') return `예상 AI 호출: ${single}`;
+  const n = teamPicked.size;
+  return workMode() === 'split' ? `예상 AI 호출: 역할 ${n}회 + 최종 통합 ${single}` : `예상 AI 호출: 독립 의견 ${n}회 + 교차 검토 ${n}회 + 최종 통합 ${single}`;
+}
+// 'ask' permission: nothing runs before the owner confirms AI, work and expected calls.
+function gate(body) {
+  if (!body || !['start', 'context.compress'].includes(body.action) || permission() !== 'ask') return body;
+  const who = body.mode === 'team' ? body.team.providers.map((id) => PERSONA[id]?.name || id).join(' · ') : PERSONA[body.provider]?.name || body.provider;
+  const what = body.action === 'context.compress' ? '대화 압축 (AI 1회)' : body.mode === 'team' ? `${body.team.style === 'split' ? '분담' : '협업'} · 최종 ${body.team.final}` : body.mode || 'analysis';
+  if (!confirm(`[권한 요청] 이 작업을 실행할까요?\n\nAI: ${who}\n작업: ${what}\n${body.action === 'context.compress' ? '' : estimate()}\n\n요청·선택 자료가 해당 AI 서비스로 전송됩니다. 파일 적용·복구는 이후 별도의 최종 확인을 받습니다.`)) throw new Error('실행을 취소했습니다.');
+  return { ...body, confirmed: true };
+}
 async function aiRequest(body) {
+  body = gate(body);
   const response = await fetch('/api/tasks/ai', body ? {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   } : { cache: 'no-store' });
@@ -698,7 +723,7 @@ async function startAI(mode) {
   try {
     await flushDraft();
     aiInfo = await aiRequest({ action: 'start', mode, provider: $('#taskAISelect').value, projectId, sessionId,
-      revision: session().revision, consent: $('#taskAIConsent').checked, files: ['explore', 'plan', 'changes'].includes(mode) ? [] : [...analysisFiles] });
+      revision: session().revision, consent: consentOK(), files: ['explore', 'plan', 'changes'].includes(mode) ? [] : [...analysisFiles] });
     data = aiInfo.state; render(true); renderAI();
     scheduleAI();
   } catch (error) { $('#taskAIStatus').textContent = error.message; }
@@ -748,7 +773,7 @@ async function startDocs({ sources, depth, consentAttachments }) {
   try {
     await flushDraft();
     aiInfo = await aiRequest({ action: 'start', mode: 'docs', provider: $('#taskAISelect').value, projectId, sessionId, revision: session().revision,
-      consent: $('#taskAIConsent').checked, consentAttachments, sources, depth, files: [] });
+      consent: consentOK(), consentAttachments, sources, depth, files: [] });
     data = aiInfo.state; render(true); renderAI(); scheduleAI();
   } catch (error) { $('#taskAIStatus').textContent = error.message; }
   finally { busy = false; controls(); }
@@ -778,7 +803,7 @@ function controls() {
   $('#taskFolderCheck').disabled = busy || !project()?.folderPath;
   $('#taskSaveMessage').disabled = busy || !session() || !input.value.trim() || analysisActive();
   $('#taskAIRun').disabled = busy || !session() || !input.value.trim() || !!aiInfo?.running || analysisActive()
-    || !$('#taskAIConsent').checked || project()?.folder.state !== 'connected' || !selectedProvider()?.available;
+    || !consentOK() || project()?.folder.state !== 'connected' || !selectedProvider()?.available;
   const runBlocked = $('#taskAIRun').disabled;
   $('#taskExploreRun').disabled = runBlocked || !supports('explore');
   $('#taskPlanRun').disabled = runBlocked || !supports('plan');
@@ -787,6 +812,16 @@ function controls() {
   $('#taskAIRun').disabled = runBlocked || !supports('analysis');
   $('#taskAICheck').disabled = busy || analysisActive() || !!aiInfo?.running;
   syncCard();
+  if (workMode() !== 'solo') {
+    const final = FINAL_OF[$('#taskActionSelect').value];
+    const leadable = [...teamPicked].some((id) => { const p = aiInfo?.providers?.find((x) => x.id === id); return p && (!p.modes?.length || p.modes.includes(final)); });
+    $('#taskSend').disabled = busy || !session() || !input.value.trim() || !!aiInfo?.running || analysisActive() || !consentOK()
+      || project()?.folder.state !== 'connected' || !final || teamPicked.size < 2 || !leadable || (final === 'analysis' && !analysisFiles.size);
+    $('#taskSend').title = !final ? '분담·협업에서는 수정안 생성 대신 파일·문서 변경안을 고르세요.' : !leadable ? '선택한 AI 중 최종 통합을 맡을 수 있는 AI가 없습니다.' : '분담·협업 실행 (Ctrl+Enter)';
+  } else $('#taskSend').title = '선택한 작업을 실행합니다 (Ctrl+Enter)';
+  $('#taskModeSelect').disabled = busy || analysisActive();
+  $('#taskPermSelect').disabled = busy || !project();
+  $('#taskCompress').disabled = busy || !session() || (session()?.messages.length || 0) < 2 || !!aiInfo?.running || !consentOK();
   $('#taskAISelect').disabled = busy || analysisActive();
   $('#taskAIConsent').disabled = busy || analysisActive();
   $('#taskAICancel').hidden = !aiInfo?.running || !analysisActive();
@@ -802,7 +837,10 @@ function controls() {
 function syncCard() {
   const target = $('#' + $('#taskActionSelect').value);
   $('#taskSend').disabled = !target || target.disabled;
-  $('#taskCardProject').textContent = project() ? `📁 ${project().name}${project().folder?.state === 'connected' ? '' : ' · 폴더 미연결'}` : '📁 프로젝트 없음';
+  $('#taskCardProject').textContent = project() ? `📁 ${project().name}${project().folder?.state === 'connected' ? '' : ' · 폴더 미연결'} ▾` : '📁 프로젝트 ▾';
+  $('#taskPermSelect').value = permission();
+  $('#taskPermSelect').title = aiInfo?.permissions?.[permission()]?.scope || 'AI 실행 권한';
+  $('#taskEstimate').textContent = estimate();
 }
 function render(restore = false) {
   const selected = session();
@@ -820,7 +858,9 @@ function render(restore = false) {
     button.onclick = () => change({ action: 'select', projectId: item.id });
     return button;
   }));
-  $('#taskSessions').replaceChildren(...(project()?.sessions || []).map((item, index) => {
+  const query = $('#taskSearch').value.trim().toLowerCase();
+  const matches = (item) => !query || [item.draft, ...item.messages.map((m) => m.text)].some((text) => String(text || '').toLowerCase().includes(query));
+  $('#taskSessions').replaceChildren(...(project()?.sessions || []).map((item, index) => [item, index]).filter(([item]) => matches(item)).reverse().map(([item, index]) => {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'task-session';
     button.textContent = (item.messages[0]?.text || (item.id === sessionId ? input.value : item.draft)).trim().split('\n')[0].slice(0, 60) || `새 작업 ${index + 1}`;
@@ -842,14 +882,36 @@ function render(restore = false) {
   const messages = selected?.messages || [];
   $('.task-center').hidden = messages.length > 0;
   $('#taskMessages').hidden = !messages.length;
-  $('#taskMessages').replaceChildren(...messages.map((message) => {
+  const PHASE = { role: '역할 작업', opinion: '독립 의견', review: '교차 검토' };
+  $('#taskMessages').replaceChildren(...messages.map((message, index) => {
     const article = document.createElement('article');
-    article.className = 'task-message';
+    const ai = message.role === 'assistant', persona = PERSONA[message.provider] || { avatar: 'claude', name: 'AI' };
+    const finalResult = ai && !message.team && messages[index - 1]?.teamFinal;
+    article.className = `task-message ${ai ? 'task-message-ai' : 'task-message-user'}${message.teamFinal ? ' task-message-handoff' : ''}`;
+    if (ai) {
+      const face = document.createElement('img'); face.className = 'task-message-av'; face.alt = ''; face.src = `/avatars/${persona.avatar}-pixel-128.png`;
+      article.append(face);
+    }
     const heading = document.createElement('small');
-    const who = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini' }[message.provider] || 'AI';
-    heading.textContent = `${message.role === 'assistant' ? `${who} · 실제 AI 답변` : '나 · 저장된 메시지'} · ${new Date(message.at).toLocaleString('ko-KR')}`;
-    const text = document.createElement('p'); text.textContent = message.text;
-    article.append(heading, text);
+    const role = message.work || (finalResult ? '최종 통합' : ai ? '단독 작업' : '');
+    heading.innerHTML = ai ? `<b></b><span class="task-message-role"></span><span class="task-message-phase"></span><span class="task-message-state">완료 · 실제 AI 답변</span><time></time>` : `<b>나</b><time></time>`;
+    if (ai) {
+      heading.querySelector('b').textContent = persona.name;
+      heading.querySelector('.task-message-role').textContent = role;
+      heading.querySelector('.task-message-phase').textContent = finalResult ? '최종 결과' : PHASE[message.phase] || '';
+      heading.querySelector('.task-message-phase').hidden = !finalResult && (!PHASE[message.phase] || PHASE[message.phase] === role);
+    }
+    heading.querySelector('time').textContent = new Date(message.at).toLocaleString('ko-KR');
+    let text = document.createElement('p'); text.textContent = message.text;
+    if (message.teamFinal) {
+      // The lead's integration request carries every team note; keep it folded.
+      const fold = document.createElement('details'); const label = document.createElement('summary');
+      label.textContent = `최종 통합 요청 · ${message.team === 'split' ? '분담' : '협업'} 결과 ${(message.text.match(/^### /gm) || []).length}개를 하나로 합칩니다`;
+      fold.append(label, text); text = fold;
+    }
+    const body = document.createElement('div'); body.className = 'task-message-body';
+    body.append(heading, text);
+    article.append(body);
     if (message.role === 'user' && message.files?.length) {
       const used = document.createElement('small'); used.className = 'task-message-files';
       used.textContent = `분석에 사용한 파일: ${message.files.join(', ')}`; article.append(used);
@@ -907,6 +969,7 @@ async function change(command) {
     if (data.folderSelectionCancelled) status.textContent = '폴더 선택을 취소했습니다. 기존 정보는 유지됩니다.';
     else if (['project.create', 'project.createLinked', 'project.rename'].includes(command.action)) projectName.value = '';
     showSidebar(false);
+    if (['select', 'project.create', 'project.createLinked', 'project.rename'].includes(command.action) && !command.sessionId) $('#taskProjectMenu').open = false;
   } catch (error) { failedCommand = command; errorStatus(error); }
   finally { busy = false; controls(); }
 }
@@ -986,6 +1049,7 @@ window.addEventListener('task-continue', async event => {
     input.value = event.detail.text; input.style.height = 'auto';
     input.style.height = `${Math.min(220, input.scrollHeight)}px`;
     await flushDraft(); input.focus();
+    status.textContent = '단톡방 내용을 새 세션 초안으로 옮겼어요. 프로젝트·작업 방식을 확인하고 요청을 다듬은 뒤 실행하세요.';
   } catch (error) { errorStatus(error); }
   finally { continuingChat = false; busy = false; controls(); }
 });
@@ -1008,8 +1072,78 @@ window.addEventListener('beforeunload', (event) => {
 });
 render();
 
-$('#taskActionSelect').onchange = syncCard;
-$('#taskSend').onclick = () => { const target = $('#' + $('#taskActionSelect').value); if (target && !target.disabled) target.click(); };
+$('#taskActionSelect').onchange = () => { renderTeamPick(); controls(); };
+$('#taskSend').onclick = () => {
+  if (workMode() !== 'solo') { startTeam(); return; }
+  const target = $('#' + $('#taskActionSelect').value); if (target && !target.disabled) target.click();
+};
+async function startTeam() {
+  if (busy || analysisActive() || $('#taskSend').disabled) return;
+  busy = true; controls();
+  try {
+    await flushDraft();
+    const final = FINAL_OF[$('#taskActionSelect').value], providers = [...teamPicked];
+    aiInfo = await aiRequest({ action: 'start', mode: 'team', provider: providers[0], projectId, sessionId, revision: session().revision, consent: consentOK(), consentAttachments: $('#taskAttachConsent').checked,
+      files: final === 'analysis' ? [...analysisFiles] : [], team: { style: workMode(), providers, final } });
+    data = aiInfo.state; render(true); renderAI(); scheduleAI();
+  } catch (error) { $('#taskAIStatus').textContent = error.message; }
+  finally { busy = false; controls(); }
+}
+function renderTeamPick() {
+  const providers = (aiInfo?.providers || []).filter((p) => p.available && (!p.modes?.length || p.modes.includes('analysis')));
+  for (const id of [...teamPicked]) if (!providers.some((p) => p.id === id)) teamPicked.delete(id);
+  if (!teamPicked.size) providers.slice(0, 3).forEach((p) => teamPicked.add(p.id));
+  const team = workMode() !== 'solo';
+  $('#taskTeamPick').hidden = !team; $('#taskAISelect').hidden = team;
+  const final = FINAL_OF[$('#taskActionSelect').value];
+  $('#taskTeamPick').replaceChildren(...providers.map((p) => {
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'task-team-ai';
+    const on = teamPicked.has(p.id), lead = !p.modes?.length || p.modes.includes(final);
+    b.setAttribute('aria-pressed', String(on)); b.disabled = busy || analysisActive();
+    b.title = `${PERSONA[p.id]?.name || p.name}${lead ? '' : ' · 분석 단계만 참여 (최종 통합은 다른 AI)'}`;
+    b.innerHTML = `<img src="/avatars/${PERSONA[p.id]?.avatar || 'claude'}-pixel-128.png" alt=""><span></span>`;
+    b.querySelector('span').textContent = PERSONA[p.id]?.name.split(' ')[0] || p.short;
+    b.onclick = () => { if (on && teamPicked.size > 2) teamPicked.delete(p.id); else if (!on && teamPicked.size < 3) teamPicked.add(p.id); renderTeamPick(); controls(); };
+    return b;
+  }));
+  $('#taskEstimate').textContent = estimate();
+}
+// The chosen work mode is a per-browser convenience.
+try { const saved = localStorage.getItem('task-work-mode'); if (['solo', 'split', 'collab'].includes(saved)) $('#taskModeSelect').value = saved; } catch { /* storage unavailable */ }
+$('#taskModeSelect').onchange = () => { try { localStorage.setItem('task-work-mode', workMode()); } catch { /* storage unavailable */ } renderTeamPick(); controls(); };
+$('#taskPermSelect').onchange = async () => {
+  const value = $('#taskPermSelect').value, scope = aiInfo?.permissions?.[value]?.scope || '';
+  if (value === 'auto' && !confirm(`자동 승인으로 바꿀까요?\n\n${scope}\n\n이 프로젝트의 요청·선택 자료를 AI 서비스로 전송하는 데 동의합니다.`)) { $('#taskPermSelect').value = permission(); return; }
+  await change({ action: 'project.permission', projectId, permission: value, ...(value === 'auto' ? { consent: true } : {}) });
+  $('#taskPermSelect').value = permission();
+};
+$('#taskCompress').onclick = async () => {
+  if (busy || aiInfo?.running) return;
+  const provider = workMode() === 'solo' ? $('#taskAISelect').value : [...teamPicked][0];
+  if (permission() !== 'ask' && !confirm('이 세션의 대화를 요약해 저장할까요?\nAI 호출 1회를 사용하고, 원본 대화는 지우지 않습니다.')) return;
+  busy = true; controls(); $('#taskCompressStatus').textContent = '압축 요청 중…';
+  try { aiInfo = await aiRequest({ action: 'context.compress', projectId, sessionId, provider, consent: consentOK() }); renderAI(); scheduleAI(); }
+  catch (error) { $('#taskCompressStatus').textContent = error.message; }
+  finally { busy = false; controls(); }
+};
+$('#taskSearch').addEventListener('input', () => render());
+function renderDrawer() {
+  const running = aiInfo?.running;
+  const where = running && data?.projects.find((item) => item.id === running.projectId);
+  const runningSession = where?.sessions.find((item) => item.id === running.sessionId);
+  $('#taskRunning').textContent = running ? `${where?.name || '다른 프로젝트'} · ${(runningSession?.messages.findLast((m) => m.role === 'user')?.text || '작업').split('\n')[0].slice(0, 40)} · 실행 중` : '진행 중인 AI 작업이 없습니다.';
+  const mine = (list, open) => (list || []).filter((item) => item.projectId === projectId && open.includes(item.status)).length;
+  const pending = mine(aiInfo?.changes, ['pending', 'approved', 'conflict']) + mine(aiInfo?.plans, ['pending', 'approved']) + mine(aiInfo?.proposals, ['pending', 'approved']);
+  $('#taskPendingCount').textContent = pending ? `검토·적용을 기다리는 결과물 ${pending}개 · 아래 목록에서 열어 확인하세요.` : '승인을 기다리는 결과물이 없습니다.';
+  const summary = session()?.summary;
+  const box = $('#taskContextSummary');
+  if (summary) {
+    box.className = 'task-context-summary';
+    box.textContent = `${new Date(summary.at).toLocaleString('ko-KR')} · 메시지 ${summary.count}개 압축 · ${PERSONA[summary.by]?.name || summary.by}\n${summary.text}`;
+  } else { box.className = 'task-sidebar-empty'; box.textContent = '아직 압축 요약이 없습니다. 대화가 길어지면 압축해 두면 다음 AI 호출과 다른 AI 인계에 요약이 함께 전달됩니다.'; }
+  const compressing = aiInfo?.runs?.find((run) => run.mode === 'compress' && run.status === 'running' && run.sessionId === sessionId);
+  $('#taskCompressStatus').textContent = compressing ? '대화를 압축하는 중…' : aiInfo?.compressError || '';
+}
 $('#taskPlus').onclick = () => { const tray = $('#taskTray'); tray.hidden = !tray.hidden; $('#taskPlus').setAttribute('aria-expanded', String(!tray.hidden)); };
 input.addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('#taskSend').click(); } });
 // A file dragged over the composer opens the tray so the drop target is visible.

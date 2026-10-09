@@ -266,3 +266,29 @@
 .task-card-status { margin: 6px 6px 0; min-height: 1.4em; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
 .task-request { display: none; }
 @media (max-width: 680px) { .task-card { border-radius: 18px; padding: 8px 10px; } .task-card-save { margin-left: 0; width: 100%; } .task-card-ai { max-width: 52vw; } }
+/* ---------- 6차: multi-AI cowork additions (same look, small pieces only) ---------- */
+.task-project-menu .task-card-menu-body { top: auto; bottom: calc(100% + 6px); width: min(320px, calc(100vw - 32px)); max-height: min(60vh, 460px); overflow-y: auto; padding: 8px 4px; }
+.task-project-menu-body h2 { margin: 0; padding: 4px 12px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.task-project-menu-body .task-project-form button, .task-project-menu-body .task-folder-actions button { background: transparent; }
+.task-project-menu-body .task-session { font-size: 12px; padding: 8px 12px; }
+.task-team-pick { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.task-team-ai { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px 2px 2px; border: 1px solid var(--line-2); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; opacity: .55; }
+.task-team-ai img { width: 22px; height: 22px; border-radius: 50%; }
+.task-team-ai[aria-pressed="true"] { opacity: 1; color: var(--text); border-color: var(--accent); background: var(--panel-2); }
+.task-estimate { margin-left: 6px; color: var(--muted); }
+.task-search { display: block; padding: 10px 12px 0; }
+.task-search input { width: 100%; padding: 7px 9px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel); color: inherit; font-size: 12px; }
+.task-context { padding-bottom: 8px; }
+.task-context-summary { margin: 2px 12px 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 11px; line-height: 1.6; white-space: pre-wrap; max-height: 220px; overflow-y: auto; color: var(--muted); }
+.task-context > button { margin: 0 12px; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: transparent; font-size: 11px; }
+.task-message-ai { display: grid; grid-template-columns: 38px minmax(0, 1fr); column-gap: 10px; }
+.task-message-ai > :not(.task-message-av) { grid-column: 2; }
+.task-message-av { width: 38px; height: 38px; border-radius: 12px; grid-row: 1 / span 9; }
+.task-message small b { color: var(--text); margin-right: 6px; }
+.task-message-role, .task-message-phase, .task-message-state { margin-right: 6px; }
+.task-message-role { color: var(--accent); font-weight: 600; }
+.task-message-phase { padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--text); }
+.task-message-state { opacity: .8; }
+.task-message-user { margin-left: auto; max-width: 88%; background: var(--panel-2); }
+.task-message-handoff { max-width: 100%; background: transparent; border-style: dashed; padding: 10px 14px; }
+.task-message-handoff summary { cursor: pointer; font-size: 12px; color: var(--muted); }
